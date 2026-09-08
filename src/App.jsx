@@ -33,11 +33,19 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authSuccess, setAuthSuccess] = useState('');
   
-  // Queue & Desk state
-  const [queue, setQueue] = useState(null);
+  // Multi-Queue & Desk state
+  const [queues, setQueues] = useState([]);
+  const [selectedQueueId, setSelectedQueueId] = useState(null);
   const [remainingTokens, setRemainingTokens] = useState(1500);
   const [accountStatus, setAccountStatus] = useState('Active');
   const [adminError, setAdminError] = useState('');
+
+  // Create Queue Modal State
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newSubtitle, setNewSubtitle] = useState('');
+  const [newSlug, setNewSlug] = useState('');
+  const [createLoading, setCreateLoading] = useState(false);
 
   // Recharge modal state
   const [isRechargeOpen, setIsRechargeOpen] = useState(false);
@@ -48,6 +56,8 @@ export default function App() {
   const [editTitle, setEditTitle] = useState('');
   const [editSubtitle, setEditSubtitle] = useState('');
   const [editSlug, setEditSlug] = useState('');
+
+  const currentQueue = queues.find(q => q.queue_id === selectedQueueId) || queues[0] || null;
 
   const playAlertSound = () => {
     try {
@@ -119,6 +129,7 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Realtime display sync for status screen
   useEffect(() => {
     if (currentPage !== 'status' || !activeQueue?.queue_id) return;
 
@@ -140,6 +151,15 @@ export default function App() {
 
     return () => supabase.removeChannel(channel);
   }, [currentPage, activeQueue?.queue_id]);
+
+  // Sync edit form inputs whenever the selected queue changes
+  useEffect(() => {
+    if (currentQueue) {
+      setEditTitle(currentQueue.queue_title);
+      setEditSubtitle(currentQueue.queue_subtitle || '');
+      setEditSlug(currentQueue.slug || '');
+    }
+  }, [selectedQueueId, queues]);
 
   async function fetchQueueBySlug(slug) {
     setLookupError('');
@@ -196,6 +216,7 @@ export default function App() {
       setRemainingTokens(1500);
     }
 
+    // Fetch all queues belonging to this admin
     const { data: queueList } = await supabase
       .from('queue_details')
       .select('*')
@@ -203,12 +224,10 @@ export default function App() {
       .order('queue_id', { ascending: true });
 
     if (queueList && queueList.length > 0) {
-      const q = queueList[0];
-      setQueue(q);
-      setEditTitle(q.queue_title);
-      setEditSubtitle(q.queue_subtitle);
-      setEditSlug(q.slug || '');
+      setQueues(queueList);
+      setSelectedQueueId(queueList[0].queue_id);
     } else {
+      // First time auto-creation of a default queue
       const defaultSlug = `desk-${Math.floor(1000 + Math.random() * 9000)}`;
       const { data: newQueue } = await supabase
         .from('queue_details')
@@ -221,14 +240,14 @@ export default function App() {
         }])
         .select()
         .single();
-      setQueue(newQueue);
-      setEditTitle('Counter 1');
-      setEditSubtitle('Consultation Desk');
-      setEditSlug(defaultSlug);
+      if (newQueue) {
+        setQueues([newQueue]);
+        setSelectedQueueId(newQueue.queue_id);
+      }
     }
   }
 
-  // 1. Password Login (Direct)
+  // Auth Functions
   async function handleLogin(e) {
     e.preventDefault();
     setLoading(true);
@@ -249,7 +268,6 @@ export default function App() {
     }
   }
 
-  // 2. Sign Up with Mandatory Name & Verification Link
   async function handleSignUp(e) {
     e.preventDefault();
     setLoading(true);
@@ -278,9 +296,7 @@ export default function App() {
       email: email.trim(),
       password: password,
       options: {
-        data: {
-          name: fullName.trim(),
-        },
+        data: { name: fullName.trim() },
         emailRedirectTo: `${window.location.origin}/`,
       },
     });
@@ -296,7 +312,6 @@ export default function App() {
     }
   }
 
-  // 3. Resend Confirmation Link
   async function handleResendLink() {
     setResendLoading(true);
     setAuthError('');
@@ -305,44 +320,32 @@ export default function App() {
     const { error } = await supabase.auth.resend({
       type: 'signup',
       email: email.trim(),
-      options: {
-        emailRedirectTo: `${window.location.origin}/`,
-      },
+      options: { emailRedirectTo: `${window.location.origin}/` },
     });
 
     setResendLoading(false);
-    if (error) {
-      setAuthError(error.message);
-    } else {
-      setAuthSuccess('A fresh verification link has been sent to your email.');
-    }
+    if (error) setAuthError(error.message);
+    else setAuthSuccess('A fresh verification link has been sent to your email.');
   }
 
-  // 4. Send Password Reset Link
   async function handleForgotPassword(e) {
     e.preventDefault();
     setLoading(true);
     setAuthError('');
-    setAuthSuccess('');
 
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo: `${window.location.origin}/`,
     });
 
     setLoading(false);
-    if (error) {
-      setAuthError(error.message);
-    } else {
-      setForgotSubmitted(true);
-    }
+    if (error) setAuthError(error.message);
+    else setForgotSubmitted(true);
   }
 
-  // 5. Update Password from Reset Link
   async function handleUpdatePassword(e) {
     e.preventDefault();
     setLoading(true);
     setAuthError('');
-    setAuthSuccess('');
 
     if (newPassword.length < 6) {
       setAuthError('Password must be at least 6 characters.');
@@ -350,35 +353,112 @@ export default function App() {
       return;
     }
 
-    const { error } = await supabase.auth.updateUser({
-      password: newPassword,
-    });
-
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
     setLoading(false);
     if (error) {
       setAuthError(error.message);
     } else {
-      setAuthSuccess('Password changed successfully! Redirecting...');
-      setTimeout(() => {
-        setCurrentPage('admin_dash');
-      }, 700);
+      setAuthSuccess('Password updated! Redirecting...');
+      setTimeout(() => setCurrentPage('admin_dash'), 700);
     }
   }
 
-  async function advanceQueue() {
-    if (!queue) return;
+  // Queue Operations
+  async function handleCreateNewQueue(e) {
+    e.preventDefault();
     setAdminError('');
-    const nextPos = queue.queue_position + 1;
+    setCreateLoading(true);
 
+    const cleanSlug = newSlug
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+
+    if (!cleanSlug) {
+      setAdminError('URL slug cannot be empty.');
+      setCreateLoading(false);
+      return;
+    }
+
+    if (/^\d+$/.test(cleanSlug)) {
+      setAdminError('Slug cannot be numbers only. Add letters (e.g. room-2).');
+      setCreateLoading(false);
+      return;
+    }
+
+    const { data: newQueue, error } = await supabase
+      .from('queue_details')
+      .insert([{
+        admin_id: session.user.id,
+        queue_title: newTitle.trim(),
+        queue_subtitle: newSubtitle.trim() || null,
+        slug: cleanSlug,
+        queue_position: 0
+      }])
+      .select()
+      .single();
+
+    setCreateLoading(false);
+
+    if (error) {
+      if (error.code === '23505') {
+        setAdminError(`The custom link /${cleanSlug} is already in use. Please pick another.`);
+      } else {
+        setAdminError(error.message);
+      }
+    } else if (newQueue) {
+      const updatedList = [...queues, newQueue];
+      setQueues(updatedList);
+      setSelectedQueueId(newQueue.queue_id);
+      setIsCreateOpen(false);
+      setNewTitle('');
+      setNewSubtitle('');
+      setNewSlug('');
+    }
+  }
+
+  async function handleDeleteQueue(queueId) {
+    if (queues.length <= 1) {
+      alert('You must keep at least one active desk counter.');
+      return;
+    }
+
+    if (!window.confirm('Are you sure you want to delete this desk queue? Its public link will stop working.')) {
+      return;
+    }
+
+    setAdminError('');
     const { error } = await supabase
       .from('queue_details')
-      .update({ queue_position: nextPos, updated_at: new Date().toISOString() })
-      .eq('queue_id', queue.queue_id);
+      .delete()
+      .eq('queue_id', queueId);
 
     if (error) {
       setAdminError(error.message);
     } else {
-      setQueue({ ...queue, queue_position: nextPos });
+      const remaining = queues.filter(q => q.queue_id !== queueId);
+      setQueues(remaining);
+      setSelectedQueueId(remaining[0].queue_id);
+      setIsEditing(false);
+    }
+  }
+
+  async function advanceQueue() {
+    if (!currentQueue) return;
+    setAdminError('');
+    const nextPos = currentQueue.queue_position + 1;
+
+    const { error } = await supabase
+      .from('queue_details')
+      .update({ queue_position: nextPos, updated_at: new Date().toISOString() })
+      .eq('queue_id', currentQueue.queue_id);
+
+    if (error) {
+      setAdminError(error.message);
+    } else {
+      setQueues(queues.map(q => q.queue_id === currentQueue.queue_id ? { ...q, queue_position: nextPos } : q));
       const newTokens = Math.max(0, remainingTokens - 1);
       setRemainingTokens(newTokens);
       if (session?.user?.id) {
@@ -391,31 +471,34 @@ export default function App() {
   }
 
   async function previousQueue() {
-    if (!queue || queue.queue_position <= 0) return;
+    if (!currentQueue || currentQueue.queue_position <= 0) return;
     setAdminError('');
-    const prevPos = queue.queue_position - 1;
+    const prevPos = currentQueue.queue_position - 1;
 
     const { error } = await supabase
       .from('queue_details')
       .update({ queue_position: prevPos, updated_at: new Date().toISOString() })
-      .eq('queue_id', queue.queue_id);
+      .eq('queue_id', currentQueue.queue_id);
 
     if (error) {
       setAdminError(error.message);
     } else {
-      setQueue({ ...queue, queue_position: prevPos });
+      setQueues(queues.map(q => q.queue_id === currentQueue.queue_id ? { ...q, queue_position: prevPos } : q));
     }
   }
 
   async function resetQueue() {
-    if (!queue || !window.confirm('Reset queue back to 0?')) return;
+    if (!currentQueue || !window.confirm(`Reset "${currentQueue.queue_title}" back to token 0?`)) return;
     const { error } = await supabase
       .from('queue_details')
       .update({ queue_position: 0, updated_at: new Date().toISOString() })
-      .eq('queue_id', queue.queue_id);
+      .eq('queue_id', currentQueue.queue_id);
 
-    if (error) setAdminError(error.message);
-    else setQueue({ ...queue, queue_position: 0 });
+    if (error) {
+      setAdminError(error.message);
+    } else {
+      setQueues(queues.map(q => q.queue_id === currentQueue.queue_id ? { ...q, queue_position: 0 } : q));
+    }
   }
 
   async function saveDetails(e) {
@@ -435,7 +518,7 @@ export default function App() {
     }
 
     if (/^\d+$/.test(cleanSlug)) {
-      setAdminError('Slug cannot be only numbers. Please use letters (e.g. clinic-1, dr-latheef).');
+      setAdminError('Slug cannot be numbers only. Add letters.');
       return;
     }
 
@@ -446,17 +529,21 @@ export default function App() {
         queue_subtitle: editSubtitle,
         slug: cleanSlug
       })
-      .eq('queue_id', queue.queue_id);
+      .eq('queue_id', currentQueue.queue_id);
 
     if (error) {
       if (error.code === '23505') {
-        setAdminError('This custom URL slug is already taken. Please choose another.');
+        setAdminError('This custom URL slug is already taken.');
       } else {
         setAdminError(error.message);
       }
     } else {
-      setQueue({ ...queue, queue_title: editTitle, queue_subtitle: editSubtitle, slug: cleanSlug });
-      setEditSlug(cleanSlug);
+      setQueues(queues.map(q => q.queue_id === currentQueue.queue_id ? {
+        ...q,
+        queue_title: editTitle,
+        queue_subtitle: editSubtitle,
+        slug: cleanSlug
+      } : q));
       setIsEditing(false);
     }
   }
@@ -467,7 +554,7 @@ export default function App() {
 
     const loaded = await loadRazorpayScript();
     if (!loaded) {
-      setAdminError('Razorpay failed to initialize. Please check your network connection.');
+      setAdminError('Razorpay failed to initialize. Check your connection.');
       setIsProcessing(false);
       return;
     }
@@ -478,7 +565,7 @@ export default function App() {
       currency: 'INR',
       name: 'LiveQueue',
       description: `Recharge ${pack.tokens.toLocaleString()} Tokens`,
-      handler: async function (response) {
+      handler: async function () {
         try {
           const updatedTokens = (remainingTokens || 0) + pack.tokens;
 
@@ -493,20 +580,14 @@ export default function App() {
           setIsRechargeOpen(false);
         } catch (err) {
           console.error('Balance update failed:', err);
-          setAdminError('Payment captured, but failed to credit tokens. Please contact support.');
+          setAdminError('Payment captured, but failed to credit tokens. Contact support.');
         } finally {
           setIsProcessing(false);
         }
       },
-      prefill: {
-        email: session?.user?.email || '',
-      },
-      theme: {
-        color: '#FF385C',
-      },
-      modal: {
-        ondismiss: () => setIsProcessing(false),
-      },
+      prefill: { email: session?.user?.email || '' },
+      theme: { color: '#FF385C' },
+      modal: { ondismiss: () => setIsProcessing(false) },
     };
 
     const rzp = new window.Razorpay(options);
@@ -514,10 +595,10 @@ export default function App() {
   }
 
   const isBlocked = accountStatus === 'Block' || remainingTokens <= 0;
-  const currentPublicLink = queue?.slug ? `${window.location.origin}/${queue.slug}` : '';
+  const currentPublicLink = currentQueue?.slug ? `${window.location.origin}/${currentQueue.slug}` : '';
 
   // ══════════════════════════════════════════════════════════
-  // VIEW 1: PUBLIC / TV DISPLAY
+  // VIEW 1: PUBLIC DISPLAY
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'status') {
     return (
@@ -582,22 +663,10 @@ export default function App() {
               Live Calling
             </div>
 
-            <h1 style={{
-              fontSize: 'clamp(2.5rem, 5vw, 4rem)',
-              fontWeight: 800,
-              margin: '0 0 8px',
-              letterSpacing: '-0.02em',
-              lineHeight: 1.2,
-              color: '#ffffff'
-            }}>
+            <h1 style={{ fontSize: 'clamp(2.5rem, 5vw, 4rem)', fontWeight: 800, margin: '0 0 8px', letterSpacing: '-0.02em', lineHeight: 1.2, color: '#ffffff' }}>
               {activeQueue.queue_title}
             </h1>
-            <p style={{
-              fontSize: '1.25rem',
-              color: '#cbd5e1',
-              margin: '0 0 48px',
-              fontWeight: 500
-            }}>
+            <p style={{ fontSize: '1.25rem', color: '#cbd5e1', margin: '0 0 48px', fontWeight: 500 }}>
               {activeQueue.queue_subtitle}
             </p>
 
@@ -627,7 +696,7 @@ export default function App() {
             </div>
 
             <p style={{ color: '#64748b', marginTop: 32, fontSize: 13, fontWeight: 500 }}>
-              Click anywhere once to enable audio chime alerts • Synced in real-time
+              Click anywhere to enable audio chime alerts • Synced in real-time
             </p>
           </div>
         ) : (
@@ -667,8 +736,6 @@ export default function App() {
   if (currentPage === 'home') {
     return (
       <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', display: 'flex', flexDirection: 'column' }}>
-        
-        {/* Navigation Bar */}
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 40px', borderBottom: '1px solid #ebebeb' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => setCurrentPage('home')}>
             <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
@@ -688,16 +755,7 @@ export default function App() {
             {session ? (
               <button
                 onClick={() => setCurrentPage('admin_dash')}
-                style={{
-                  background: '#222222',
-                  color: '#ffffff',
-                  border: 'none',
-                  padding: '11px 22px',
-                  borderRadius: 999,
-                  fontWeight: 600,
-                  fontSize: 14,
-                  cursor: 'pointer'
-                }}
+                style={{ background: '#222222', color: '#ffffff', border: 'none', padding: '11px 22px', borderRadius: 999, fontWeight: 600, fontSize: 14, cursor: 'pointer' }}
               >
                 Open Dashboard
               </button>
@@ -707,16 +765,7 @@ export default function App() {
                   switchAuthMode('login');
                   setCurrentPage('admin_login');
                 }}
-                style={{
-                  background: 'transparent',
-                  color: '#222222',
-                  border: '1px solid #dddddd',
-                  padding: '10px 20px',
-                  borderRadius: 999,
-                  fontWeight: 600,
-                  fontSize: 14,
-                  cursor: 'pointer'
-                }}
+                style={{ background: 'transparent', color: '#222222', border: '1px solid #dddddd', padding: '10px 20px', borderRadius: 999, fontWeight: 600, fontSize: 14, cursor: 'pointer' }}
               >
                 Host / Admin Login
               </button>
@@ -724,7 +773,6 @@ export default function App() {
           </div>
         </header>
 
-        {/* Hero Section */}
         <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 24px 80px' }}>
           <div style={{ textAlign: 'center', maxWidth: 680, marginBottom: 44 }}>
             <h1 style={{ fontSize: 'clamp(2.4rem, 4.5vw, 3.6rem)', fontWeight: 800, margin: '0 0 16px', letterSpacing: '-0.02em', lineHeight: 1.15, color: '#222222' }}>
@@ -757,17 +805,7 @@ export default function App() {
                   placeholder="dr-adam or room-1"
                   value={inputQuery}
                   onChange={e => setInputQuery(e.target.value)}
-                  style={{
-                    border: 'none',
-                    outline: 'none',
-                    fontSize: 16,
-                    color: '#222222',
-                    background: 'transparent',
-                    fontWeight: 500,
-                    width: '100%',
-                    padding: 0,
-                    lineHeight: 'normal'
-                  }}
+                  style={{ border: 'none', outline: 'none', fontSize: 16, color: '#222222', background: 'transparent', fontWeight: 500, width: '100%', padding: 0 }}
                 />
               </div>
 
@@ -810,7 +848,7 @@ export default function App() {
   }
 
   // ══════════════════════════════════════════════════════════
-  // VIEW 3: RESET PASSWORD AFTER CLICKING EMAIL LINK
+  // VIEW 3: PASSWORD RECOVERY TARGET
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'reset_password') {
     return (
@@ -822,11 +860,6 @@ export default function App() {
           {authError && (
             <div style={{ backgroundColor: '#fff8f6', color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 16 }}>
               {authError}
-            </div>
-          )}
-          {authSuccess && (
-            <div style={{ backgroundColor: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 16 }}>
-              {authSuccess}
             </div>
           )}
 
@@ -867,20 +900,12 @@ export default function App() {
   }
 
   // ══════════════════════════════════════════════════════════
-  // VIEW 4: ADMIN AUTH (Login, Sign Up & Forgot Password)
+  // VIEW 4: ADMIN AUTH
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'admin_login' && !session) {
     return (
       <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', padding: 24 }}>
-        <div style={{
-          maxWidth: 420,
-          width: '100%',
-          backgroundColor: '#ffffff',
-          borderRadius: 24,
-          boxShadow: '0 12px 36px rgba(0,0,0,0.08)',
-          border: '1px solid #ebebeb',
-          overflow: 'hidden'
-        }}>
+        <div style={{ maxWidth: 420, width: '100%', backgroundColor: '#ffffff', borderRadius: 24, boxShadow: '0 12px 36px rgba(0,0,0,0.08)', border: '1px solid #ebebeb', overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', padding: '18px 24px', borderBottom: '1px solid #ebebeb' }}>
             <button
               onClick={() => {
@@ -900,16 +925,8 @@ export default function App() {
           </div>
 
           <div style={{ padding: '28px 24px' }}>
-            
-            {/* Top Switcher Tabs */}
             {authMode !== 'forgot' && signupStep !== 'link_sent' && (
-              <div style={{
-                display: 'flex',
-                backgroundColor: '#f1f5f9',
-                borderRadius: 12,
-                padding: 4,
-                marginBottom: 24
-              }}>
+              <div style={{ display: 'flex', backgroundColor: '#f1f5f9', borderRadius: 12, padding: 4, marginBottom: 24 }}>
                 <button
                   type="button"
                   onClick={() => switchAuthMode('login')}
@@ -922,9 +939,7 @@ export default function App() {
                     color: authMode === 'login' ? '#222222' : '#64748b',
                     fontWeight: 700,
                     fontSize: 14,
-                    cursor: 'pointer',
-                    boxShadow: authMode === 'login' ? '0 2px 6px rgba(0,0,0,0.06)' : 'none',
-                    transition: 'all 0.15s ease'
+                    cursor: 'pointer'
                   }}
                 >
                   Sign In
@@ -941,9 +956,7 @@ export default function App() {
                     color: authMode === 'signup' ? '#222222' : '#64748b',
                     fontWeight: 700,
                     fontSize: 14,
-                    cursor: 'pointer',
-                    boxShadow: authMode === 'signup' ? '0 2px 6px rgba(0,0,0,0.06)' : 'none',
-                    transition: 'all 0.15s ease'
+                    cursor: 'pointer'
                   }}
                 >
                   Sign Up
@@ -963,15 +976,10 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 1: INSTANT SIGN IN (Email + Password) */}
             {authMode === 'login' && (
               <div>
-                <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', letterSpacing: '-0.02em', color: '#222222' }}>
-                  Welcome Host
-                </h2>
-                <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px', lineHeight: 1.4 }}>
-                  Sign in using your registered email and password.
-                </p>
+                <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Welcome Host</h2>
+                <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px' }}>Sign in using your registered email and password.</p>
 
                 <form onSubmit={handleLogin}>
                   <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
@@ -1040,17 +1048,12 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 2: SIGN UP */}
             {authMode === 'signup' && (
               <div>
                 {signupStep === 'form' ? (
                   <div>
-                    <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', letterSpacing: '-0.02em', color: '#222222' }}>
-                      Create Your Desk
-                    </h2>
-                    <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px', lineHeight: 1.4 }}>
-                      Register your host account with email and password.
-                    </p>
+                    <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Create Your Desk</h2>
+                    <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px' }}>Register your host account with email and password.</p>
 
                     <form onSubmit={handleSignUp}>
                       <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
@@ -1141,76 +1144,32 @@ export default function App() {
                   </div>
                 ) : (
                   <div style={{ textAlign: 'center', padding: '8px 0' }}>
-                    <div style={{
-                      width: 60,
-                      height: 60,
-                      borderRadius: '50%',
-                      backgroundColor: '#ffeef1',
-                      color: '#FF385C',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      marginBottom: 16
-                    }}>
+                    <div style={{ width: 60, height: 60, borderRadius: '50%', backgroundColor: '#ffeef1', color: '#FF385C', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
                       <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                         <rect x="2" y="4" width="20" height="16" rx="2"></rect>
                         <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
                       </svg>
                     </div>
-
-                    <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>
-                      Verification Link Sent
-                    </h2>
+                    <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>Verification Link Sent</h2>
                     <p style={{ color: '#717171', fontSize: 14, margin: '0 0 20px', lineHeight: 1.5 }}>
-                      We have sent an activation link to:<br />
+                      We sent an activation link to:<br />
                       <strong style={{ color: '#222222' }}>{email}</strong>
                     </p>
-
-                    <div style={{
-                      backgroundColor: '#f8fafc',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: 14,
-                      padding: 16,
-                      fontSize: 13,
-                      color: '#475569',
-                      lineHeight: 1.5,
-                      textAlign: 'left',
-                      marginBottom: 24
-                    }}>
-                      💡 <strong>Next steps:</strong> Open your email inbox, find the email from LiveQueue, and click <strong>Confirm email address</strong>. Once confirmed, you can log in with your password.
+                    <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 14, padding: 16, fontSize: 13, color: '#475569', lineHeight: 1.5, textAlign: 'left', marginBottom: 24 }}>
+                      💡 <strong>Next step:</strong> Click the confirmation link in your inbox. Once confirmed, return here and sign in with your email and password.
                     </div>
-
                     <button
                       type="button"
                       onClick={() => switchAuthMode('login')}
-                      style={{
-                        width: '100%',
-                        padding: 14,
-                        background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: 12,
-                        fontWeight: 700,
-                        fontSize: 15,
-                        cursor: 'pointer',
-                        marginBottom: 14
-                      }}
+                      style={{ width: '100%', padding: 14, background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: 'pointer', marginBottom: 14 }}
                     >
                       Go to Sign In
                     </button>
-
                     <button
                       type="button"
                       onClick={handleResendLink}
                       disabled={resendLoading}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#717171',
-                        fontSize: 13,
-                        fontWeight: 600,
-                        cursor: 'pointer'
-                      }}
+                      style={{ background: 'none', border: 'none', color: '#717171', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
                     >
                       {resendLoading ? 'Resending...' : "Didn't get the email? Resend link"}
                     </button>
@@ -1219,17 +1178,12 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 3: FORGOT PASSWORD */}
             {authMode === 'forgot' && (
               <div>
                 {!forgotSubmitted ? (
                   <div>
-                    <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', letterSpacing: '-0.02em', color: '#222222' }}>
-                      Reset Password
-                    </h2>
-                    <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px', lineHeight: 1.4 }}>
-                      Enter your email to receive a password recovery link.
-                    </p>
+                    <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Reset Password</h2>
+                    <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px' }}>Enter your email to receive a password reset link.</p>
 
                     <form onSubmit={handleForgotPassword}>
                       <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
@@ -1247,18 +1201,7 @@ export default function App() {
                       <button
                         type="submit"
                         disabled={loading}
-                        style={{
-                          width: '100%',
-                          padding: 14,
-                          background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: 12,
-                          fontWeight: 700,
-                          fontSize: 15,
-                          cursor: 'pointer',
-                          marginBottom: 16
-                        }}
+                        style={{ width: '100%', padding: 14, background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: 'pointer', marginBottom: 16 }}
                       >
                         {loading ? 'Sending link...' : 'Send Reset Link'}
                       </button>
@@ -1266,27 +1209,14 @@ export default function App() {
                   </div>
                 ) : (
                   <div style={{ textAlign: 'center', padding: '10px 0' }}>
-                    <div style={{
-                      width: 56,
-                      height: 56,
-                      borderRadius: '50%',
-                      backgroundColor: '#f0fdf4',
-                      color: '#166534',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      marginBottom: 16
-                    }}>
+                    <div style={{ width: 56, height: 56, borderRadius: '50%', backgroundColor: '#f0fdf4', color: '#166534', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
                       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="20 6 9 17 4 12"></polyline>
                       </svg>
                     </div>
-
-                    <h2 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>
-                      Reset Link Sent
-                    </h2>
+                    <h2 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>Reset Link Sent</h2>
                     <p style={{ color: '#717171', fontSize: 13, lineHeight: 1.5, margin: '0 0 20px' }}>
-                      We sent a password reset link to <strong>{email}</strong>. Click the link in your email to set a new password.
+                      We sent a reset link to <strong>{email}</strong>.
                     </p>
                   </div>
                 )}
@@ -1302,7 +1232,6 @@ export default function App() {
                 </div>
               </div>
             )}
-
           </div>
         </div>
       </div>
@@ -1310,7 +1239,7 @@ export default function App() {
   }
 
   // ══════════════════════════════════════════════════════════
-  // VIEW 5: ADMIN CONTROLLER DASHBOARD
+  // VIEW 5: ADMIN CONTROLLER DASHBOARD (MULTI-QUEUE)
   // ══════════════════════════════════════════════════════════
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', padding: '0 20px 60px' }}>
@@ -1361,7 +1290,7 @@ export default function App() {
         }}>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: '#222222' }}>Remaining Balance</div>
-            <div style={{ fontSize: 12, color: '#717171' }}>Available calls in your quota</div>
+            <div style={{ fontSize: 12, color: '#717171' }}>Shared across all your desks</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{
@@ -1395,9 +1324,78 @@ export default function App() {
                 <line x1="12" y1="5" x2="12" y2="19"></line>
                 <line x1="5" y1="12" x2="19" y2="12"></line>
               </svg>
-              Recharge / Buy Token
+              Recharge
             </button>
           </div>
+        </div>
+
+        {/* MULTI-QUEUE SELECTOR BAR */}
+        <div style={{
+          backgroundColor: '#ffffff',
+          borderRadius: 20,
+          padding: '14px 18px',
+          border: '1px solid #ebebeb',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.04)',
+          marginBottom: 16,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10
+        }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', marginBottom: 4 }}>
+              Active Desk / Counter ({queues.length})
+            </div>
+            <select
+              value={selectedQueueId || ''}
+              onChange={e => {
+                setSelectedQueueId(Number(e.target.value));
+                setIsEditing(false);
+              }}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: 10,
+                border: '1px solid #cbd5e1',
+                fontSize: 14,
+                fontWeight: 700,
+                color: '#222222',
+                backgroundColor: '#f8fafc',
+                cursor: 'pointer'
+              }}
+            >
+              {queues.map(q => (
+                <option key={q.queue_id} value={q.queue_id}>
+                  {q.queue_title} {q.queue_subtitle ? `(${q.queue_subtitle})` : ''} - /{q.slug}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            onClick={() => setIsCreateOpen(true)}
+            style={{
+              height: 38,
+              alignSelf: 'flex-end',
+              padding: '0 14px',
+              backgroundColor: '#222222',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: 10,
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              whiteSpace: 'nowrap'
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            Add Desk
+          </button>
         </div>
 
         {adminError && (
@@ -1406,8 +1404,8 @@ export default function App() {
           </div>
         )}
 
-        {/* Counter Action Card */}
-        {queue && (
+        {/* Counter Action Card for Selected Queue */}
+        {currentQueue && (
           <div style={{
             backgroundColor: '#ffffff',
             borderRadius: 24,
@@ -1452,7 +1450,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                   <button
                     type="submit"
                     style={{ flex: 1, padding: 11, background: '#222222', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer' }}
@@ -1467,14 +1465,24 @@ export default function App() {
                     Cancel
                   </button>
                 </div>
+
+                {queues.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteQueue(currentQueue.queue_id)}
+                    style={{ width: '100%', padding: 9, background: 'transparent', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    Delete this desk
+                  </button>
+                )}
               </form>
             ) : (
               <div style={{ marginBottom: 20 }}>
                 <h2 style={{ fontSize: 24, fontWeight: 800, margin: '0 0 4px', letterSpacing: '-0.02em', color: '#222222' }}>
-                  {queue.queue_title}
+                  {currentQueue.queue_title}
                 </h2>
                 <div style={{ color: '#717171', fontSize: 14, marginBottom: 8 }}>
-                  {queue.queue_subtitle}
+                  {currentQueue.queue_subtitle}
                 </div>
                 <button
                   onClick={() => setIsEditing(true)}
@@ -1491,25 +1499,25 @@ export default function App() {
                 Current Token
               </span>
               <div style={{ fontSize: '5.5rem', fontWeight: 900, lineHeight: 1.1, margin: '8px 0 0', color: '#222222', letterSpacing: '-0.03em' }}>
-                {queue.queue_position === 0 ? '—' : queue.queue_position}
+                {currentQueue.queue_position === 0 ? '—' : currentQueue.queue_position}
               </div>
             </div>
 
-            {/* Actions */}
+            {/* Calling Actions */}
             <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
               <button
                 onClick={previousQueue}
-                disabled={!queue || queue.queue_position <= 0}
+                disabled={!currentQueue || currentQueue.queue_position <= 0}
                 style={{
                   flex: 1,
                   padding: 16,
                   fontSize: 15,
                   fontWeight: 600,
-                  backgroundColor: !queue || queue.queue_position <= 0 ? '#f7f7f7' : '#ffffff',
-                  color: !queue || queue.queue_position <= 0 ? '#c7c7c7' : '#222222',
+                  backgroundColor: !currentQueue || currentQueue.queue_position <= 0 ? '#f7f7f7' : '#ffffff',
+                  color: !currentQueue || currentQueue.queue_position <= 0 ? '#c7c7c7' : '#222222',
                   border: '1px solid #dddddd',
                   borderRadius: 14,
-                  cursor: !queue || queue.queue_position <= 0 ? 'not-allowed' : 'pointer'
+                  cursor: !currentQueue || currentQueue.queue_position <= 0 ? 'not-allowed' : 'pointer'
                 }}
               >
                 -1 Previous
@@ -1545,7 +1553,7 @@ export default function App() {
         )}
 
         {/* Public Display Card */}
-        {queue && (
+        {currentQueue && (
           <div style={{
             backgroundColor: '#ffffff',
             borderRadius: 24,
@@ -1588,10 +1596,111 @@ export default function App() {
             </div>
           </div>
         )}
-
       </div>
 
-      {/* Recharge Modal */}
+      {/* CREATE NEW QUEUE MODAL */}
+      {isCreateOpen && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.45)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 20,
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: '#ffffff',
+            borderRadius: 24,
+            padding: 28,
+            maxWidth: 440,
+            width: '100%',
+            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.2)',
+            border: '1px solid #ebebeb'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <div>
+                <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0, color: '#222222' }}>Create New Desk</h3>
+                <p style={{ fontSize: 13, color: '#717171', margin: '4px 0 0' }}>Add another counter under your account</p>
+              </div>
+              <button
+                onClick={() => setIsCreateOpen(false)}
+                style={{ background: 'none', border: 'none', fontSize: 20, color: '#999999', cursor: 'pointer', padding: 4 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateNewQueue}>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#717171', display: 'block', marginBottom: 4 }}>
+                  Counter / Doctor Name <span style={{ color: '#FF385C' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Dr. Adam or Room 2"
+                  value={newTitle}
+                  onChange={e => setNewTitle(e.target.value)}
+                  style={{ width: '100%', padding: '11px 14px', boxSizing: 'border-box', border: '1px solid #b0b0b0', borderRadius: 12, fontSize: 14 }}
+                />
+              </div>
+
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#717171', display: 'block', marginBottom: 4 }}>
+                  Subtitle / Specialty
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Pediatrics or Floor 1"
+                  value={newSubtitle}
+                  onChange={e => setNewSubtitle(e.target.value)}
+                  style={{ width: '100%', padding: '11px 14px', boxSizing: 'border-box', border: '1px solid #b0b0b0', borderRadius: 12, fontSize: 14 }}
+                />
+              </div>
+
+              <div style={{ marginBottom: 24 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#717171', display: 'block', marginBottom: 4 }}>
+                  Custom Public Slug <span style={{ color: '#FF385C' }}>*</span>
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #b0b0b0', borderRadius: 12, padding: '0 12px' }}>
+                  <span style={{ color: '#717171', fontSize: 14 }}>livequeue.co.in/</span>
+                  <input
+                    type="text"
+                    required
+                    placeholder="room-2"
+                    value={newSlug}
+                    onChange={e => setNewSlug(e.target.value)}
+                    style={{ flex: 1, border: 'none', outline: 'none', padding: '11px 6px', fontSize: 14 }}
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={createLoading}
+                style={{
+                  width: '100%',
+                  padding: 14,
+                  background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 12,
+                  fontWeight: 700,
+                  fontSize: 15,
+                  cursor: 'pointer'
+                }}
+              >
+                {createLoading ? 'Creating...' : 'Create Desk Counter'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* RECHARGE MODAL */}
       {isRechargeOpen && (
         <div style={{
           position: 'fixed',
@@ -1616,7 +1725,7 @@ export default function App() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <div>
                 <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0, color: '#222222' }}>Recharge Quota</h3>
-                <p style={{ fontSize: 13, color: '#717171', margin: '4px 0 0' }}>Select a package to add calls to your desk</p>
+                <p style={{ fontSize: 13, color: '#717171', margin: '4px 0 0' }}>Select a package to add calls to your balance</p>
               </div>
               <button
                 onClick={() => !isProcessing && setIsRechargeOpen(false)}

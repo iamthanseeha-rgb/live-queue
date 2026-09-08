@@ -21,11 +21,13 @@ export default function App() {
 
   // Admin Auth state
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'signup' | 'forgot'
+  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [otp, setOtp] = useState('');
+  const [signupStep, setSignupStep] = useState('form'); // 'form' | 'otp'
   const [forgotStep, setForgotStep] = useState('email'); // 'email' | 'otp'
   const [loading, setLoading] = useState(false);
   const [authError, setAuthError] = useState('');
@@ -47,7 +49,6 @@ export default function App() {
   const [editSubtitle, setEditSubtitle] = useState('');
   const [editSlug, setEditSlug] = useState('');
 
-  // Synthetic Audio Chime
   const playAlertSound = () => {
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -87,6 +88,7 @@ export default function App() {
     setConfirmPassword('');
     setNewPassword('');
     setOtp('');
+    setSignupStep('form');
     setForgotStep('email');
   };
 
@@ -167,7 +169,6 @@ export default function App() {
   async function fetchAdminData(adminId) {
     setAdminError('');
 
-    // Fetch or initialize admin record
     const { data: adminData } = await supabase
       .from('admin')
       .select('status, valid_until')
@@ -181,7 +182,6 @@ export default function App() {
       setAccountStatus('Active');
     }
 
-    // Fetch or initialize usage quota
     const { data: usageData } = await supabase
       .from('usage')
       .select('remaining_tokens')
@@ -195,7 +195,6 @@ export default function App() {
       setRemainingTokens(1500);
     }
 
-    // Fetch or initialize desk counter
     const { data: queueList } = await supabase
       .from('queue_details')
       .select('*')
@@ -228,7 +227,7 @@ export default function App() {
     }
   }
 
-  // 1. Password Login
+  // 1. Password Login (No email sent)
   async function handleLogin(e) {
     e.preventDefault();
     setLoading(true);
@@ -249,12 +248,18 @@ export default function App() {
     }
   }
 
-  // 2. Account Sign Up
+  // 2. Sign Up Initiation (Sends 6-digit OTP to email)
   async function handleSignUp(e) {
     e.preventDefault();
     setLoading(true);
     setAuthError('');
     setAuthSuccess('');
+
+    if (!fullName.trim()) {
+      setAuthError('Please enter your full name.');
+      setLoading(false);
+      return;
+    }
 
     if (password.length < 6) {
       setAuthError('Password must be at least 6 characters.');
@@ -271,20 +276,75 @@ export default function App() {
     const { data, error } = await supabase.auth.signUp({
       email: email.trim(),
       password: password,
+      options: {
+        data: {
+          name: fullName.trim(),
+        },
+      },
     });
 
     setLoading(false);
     if (error) {
       setAuthError(error.message);
-    } else if (data?.user && !data?.session) {
-      setAuthSuccess('Account registered! Please check your email inbox to confirm your account.');
     } else if (data?.session) {
+      // Direct login if email confirmations are turned off
+      setCurrentPage('admin_dash');
+      fetchAdminData(data.user.id);
+    } else {
+      // Switch to OTP verification step
+      setSignupStep('otp');
+      setAuthSuccess(`A 6-digit verification code was sent to ${email.trim()}.`);
+    }
+  }
+
+  // 3. Verify Sign Up OTP
+  async function handleVerifySignUpOtp(e) {
+    e.preventDefault();
+    setLoading(true);
+    setAuthError('');
+    setAuthSuccess('');
+
+    let { data, error } = await supabase.auth.verifyOtp({
+      email: email.trim(),
+      token: otp.trim(),
+      type: 'signup',
+    });
+
+    if (error) {
+      const retry = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: otp.trim(),
+        type: 'email',
+      });
+      if (!retry.error) {
+        data = retry.data;
+        error = null;
+      }
+    }
+
+    if (error) {
+      setLoading(false);
+      setAuthError(error.message);
+      return;
+    }
+
+    // Ensure host name persists into admin table
+    if (data?.user) {
+      await supabase
+        .from('admin')
+        .upsert({
+          admin_id: data.user.id,
+          email: data.user.email,
+          name: fullName.trim(),
+          status: 'Active',
+        });
+      setLoading(false);
       setCurrentPage('admin_dash');
       fetchAdminData(data.user.id);
     }
   }
 
-  // 3. Send OTP for Forgot Password
+  // 4. Send OTP for Forgot Password
   async function handleForgotPasswordSendOtp(e) {
     e.preventDefault();
     setLoading(true);
@@ -300,11 +360,11 @@ export default function App() {
       setAuthError(error.message);
     } else {
       setForgotStep('otp');
-      setAuthSuccess('A 6-digit reset code has been sent to your email.');
+      setAuthSuccess('A 6-digit recovery code has been sent to your email.');
     }
   }
 
-  // 4. Verify OTP & Set New Password
+  // 5. Verify OTP & Set New Password
   async function handleResetPasswordWithOtp(e) {
     e.preventDefault();
     setLoading(true);
@@ -823,7 +883,7 @@ export default function App() {
 
           <div style={{ padding: '28px 24px' }}>
             
-            {/* Top Switcher Tabs (Sign In / Sign Up) */}
+            {/* Tab Buttons */}
             {authMode !== 'forgot' && (
               <div style={{
                 display: 'flex',
@@ -875,13 +935,13 @@ export default function App() {
 
             <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', letterSpacing: '-0.02em', color: '#222222' }}>
               {authMode === 'login' && 'Welcome Host'}
-              {authMode === 'signup' && 'Create Your Desk'}
+              {authMode === 'signup' && (signupStep === 'form' ? 'Create Your Desk' : 'Verify Your Email')}
               {authMode === 'forgot' && 'Reset Password'}
             </h2>
             <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px', lineHeight: 1.4 }}>
-              {authMode === 'login' && 'Sign in using your email and password.'}
-              {authMode === 'signup' && 'Register your email and start managing live queues.'}
-              {authMode === 'forgot' && (forgotStep === 'email' ? 'Enter your email to receive a 6-digit recovery OTP.' : 'Enter the 6-digit OTP code and set your new password.')}
+              {authMode === 'login' && 'Sign in using your registered email and password.'}
+              {authMode === 'signup' && (signupStep === 'form' ? 'Fill in your details to set up your desk counter.' : 'Enter the 6-digit verification code sent to your inbox.')}
+              {authMode === 'forgot' && (forgotStep === 'email' ? 'Enter your email to receive a recovery code.' : 'Enter the 6-digit code and choose a new password.')}
             </p>
 
             {authError && (
@@ -896,7 +956,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 1: LOGIN WITH EMAIL & PASSWORD */}
+            {/* TAB 1: INSTANT LOGIN (Email & Password) */}
             {authMode === 'login' && (
               <form onSubmit={handleLogin}>
                 <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
@@ -953,66 +1013,135 @@ export default function App() {
               </form>
             )}
 
-            {/* TAB 2: SIGN UP */}
+            {/* TAB 2: SIGN UP WITH MANDATORY NAME & OTP */}
             {authMode === 'signup' && (
-              <form onSubmit={handleSignUp}>
-                <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Email Address</label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="name@example.com"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
-                  />
-                </div>
+              <div>
+                {signupStep === 'form' ? (
+                  <form onSubmit={handleSignUp}>
+                    <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
+                      <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
+                        Full Name <span style={{ color: '#FF385C' }}>*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Dr. Adam or Clinic Host"
+                        value={fullName}
+                        onChange={e => setFullName(e.target.value)}
+                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                      />
+                    </div>
 
-                <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Password</label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="At least 6 characters"
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
-                  />
-                </div>
+                    <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
+                      <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
+                        Email Address <span style={{ color: '#FF385C' }}>*</span>
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        placeholder="name@example.com"
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
+                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                      />
+                    </div>
 
-                <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Confirm Password</label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="Repeat password"
-                    value={confirmPassword}
-                    onChange={e => setConfirmPassword(e.target.value)}
-                    style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
-                  />
-                </div>
+                    <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
+                      <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
+                        Password <span style={{ color: '#FF385C' }}>*</span>
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        placeholder="At least 6 characters"
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                      />
+                    </div>
 
-                <button
-                  type="submit"
-                  disabled={loading}
-                  style={{
-                    width: '100%',
-                    padding: 14,
-                    background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: 12,
-                    fontWeight: 700,
-                    fontSize: 15,
-                    cursor: 'pointer'
-                  }}
-                >
-                  {loading ? 'Creating account...' : 'Create Account'}
-                </button>
-              </form>
+                    <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
+                      <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
+                        Confirm Password <span style={{ color: '#FF385C' }}>*</span>
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        placeholder="Repeat password"
+                        value={confirmPassword}
+                        onChange={e => setConfirmPassword(e.target.value)}
+                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      style={{
+                        width: '100%',
+                        padding: 14,
+                        background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 12,
+                        fontWeight: 700,
+                        fontSize: 15,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {loading ? 'Sending verification code...' : 'Continue with OTP'}
+                    </button>
+                  </form>
+                ) : (
+                  <form onSubmit={handleVerifySignUpOtp}>
+                    <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
+                      <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
+                        Enter 6-Digit Email Code
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="• • • • • •"
+                        value={otp}
+                        onChange={e => setOtp(e.target.value)}
+                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 18, textAlign: 'center', letterSpacing: 6, fontWeight: 700, color: '#222222' }}
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      style={{
+                        width: '100%',
+                        padding: 14,
+                        backgroundColor: '#222222',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 12,
+                        fontWeight: 700,
+                        fontSize: 15,
+                        cursor: 'pointer',
+                        marginBottom: 16
+                      }}
+                    >
+                      {loading ? 'Verifying...' : 'Verify Code & Enter'}
+                    </button>
+
+                    <div style={{ textAlign: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={() => setSignupStep('form')}
+                        style={{ background: 'none', border: 'none', color: '#717171', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                      >
+                        ← Edit signup details
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
             )}
 
-            {/* TAB 3: FORGOT PASSWORD */}
+            {/* TAB 3: FORGOT PASSWORD FLOW */}
             {authMode === 'forgot' && (
               <div>
                 {forgotStep === 'email' ? (
@@ -1022,7 +1151,7 @@ export default function App() {
                       <input
                         type="email"
                         required
-                        placeholder="Enter your email"
+                        placeholder="Enter your registered email"
                         value={email}
                         onChange={e => setEmail(e.target.value)}
                         style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
@@ -1045,7 +1174,7 @@ export default function App() {
                         marginBottom: 16
                       }}
                     >
-                      {loading ? 'Sending OTP...' : 'Send 6-Digit Reset Code'}
+                      {loading ? 'Sending code...' : 'Send 6-Digit Reset Code'}
                     </button>
                   </form>
                 ) : (
@@ -1107,7 +1236,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Bottom quick switch link */}
             {authMode === 'login' && (
               <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#717171' }}>
                 Don't have an account?{' '}
@@ -1316,7 +1444,7 @@ export default function App() {
               </div>
             )}
 
-            {/* Big Token Number Display */}
+            {/* Token Big Number Display */}
             <div style={{ padding: '24px 0', borderTop: '1px solid #f0f0f0', borderBottom: '1px solid #f0f0f0', margin: '16px 0 24px' }}>
               <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, textTransform: 'uppercase', color: '#717171' }}>
                 Current Token
@@ -1326,7 +1454,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Control Actions */}
+            {/* Actions */}
             <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
               <button
                 onClick={previousQueue}
@@ -1375,7 +1503,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Display Link & QR Card */}
+        {/* Public Display Card */}
         {queue && (
           <div style={{
             backgroundColor: '#ffffff',
@@ -1422,7 +1550,7 @@ export default function App() {
 
       </div>
 
-      {/* Recharge / Buy Token Modal */}
+      {/* Recharge Modal */}
       {isRechargeOpen && (
         <div style={{
           position: 'fixed',

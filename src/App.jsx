@@ -11,7 +11,7 @@ const TOKEN_PACKS = [
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [currentPage, setCurrentPage] = useState('home'); // 'home' | 'admin_login' | 'status' | 'admin_dash'
+  const [currentPage, setCurrentPage] = useState('home'); // 'home' | 'admin_login' | 'status' | 'admin_dash' | 'reset_password'
   
   // Public search & status state
   const [inputQuery, setInputQuery] = useState('');
@@ -26,10 +26,10 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [otp, setOtp] = useState('');
-  const [signupStep, setSignupStep] = useState('form'); // 'form' | 'otp'
-  const [forgotStep, setForgotStep] = useState('email'); // 'email' | 'otp'
+  const [signupStep, setSignupStep] = useState('form'); // 'form' | 'link_sent'
+  const [forgotSubmitted, setForgotSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
   const [authError, setAuthError] = useState('');
   const [authSuccess, setAuthSuccess] = useState('');
   
@@ -87,9 +87,8 @@ export default function App() {
     setPassword('');
     setConfirmPassword('');
     setNewPassword('');
-    setOtp('');
     setSignupStep('form');
-    setForgotStep('email');
+    setForgotSubmitted(false);
   };
 
   useEffect(() => {
@@ -107,9 +106,11 @@ export default function App() {
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
-      if (session && !getRouteSlug()) {
+      if (event === 'PASSWORD_RECOVERY') {
+        setCurrentPage('reset_password');
+      } else if (session && !getRouteSlug()) {
         setCurrentPage('admin_dash');
         fetchAdminData(session.user.id);
       }
@@ -227,7 +228,7 @@ export default function App() {
     }
   }
 
-  // 1. Password Login (No email sent)
+  // 1. Password Login (Direct)
   async function handleLogin(e) {
     e.preventDefault();
     setLoading(true);
@@ -248,7 +249,7 @@ export default function App() {
     }
   }
 
-  // 2. Sign Up Initiation (Sends 6-digit OTP to email)
+  // 2. Sign Up with Mandatory Name & Verification Link
   async function handleSignUp(e) {
     e.preventDefault();
     setLoading(true);
@@ -280,6 +281,7 @@ export default function App() {
         data: {
           name: fullName.trim(),
         },
+        emailRedirectTo: `${window.location.origin}/`,
       },
     });
 
@@ -287,117 +289,76 @@ export default function App() {
     if (error) {
       setAuthError(error.message);
     } else if (data?.session) {
-      // Direct login if email confirmations are turned off
       setCurrentPage('admin_dash');
       fetchAdminData(data.user.id);
     } else {
-      // Switch to OTP verification step
-      setSignupStep('otp');
-      setAuthSuccess(`A 6-digit verification code was sent to ${email.trim()}.`);
+      setSignupStep('link_sent');
     }
   }
 
-  // 3. Verify Sign Up OTP
-  async function handleVerifySignUpOtp(e) {
-    e.preventDefault();
-    setLoading(true);
+  // 3. Resend Confirmation Link
+  async function handleResendLink() {
+    setResendLoading(true);
     setAuthError('');
     setAuthSuccess('');
 
-    let { data, error } = await supabase.auth.verifyOtp({
-      email: email.trim(),
-      token: otp.trim(),
+    const { error } = await supabase.auth.resend({
       type: 'signup',
+      email: email.trim(),
+      options: {
+        emailRedirectTo: `${window.location.origin}/`,
+      },
     });
 
+    setResendLoading(false);
     if (error) {
-      const retry = await supabase.auth.verifyOtp({
-        email: email.trim(),
-        token: otp.trim(),
-        type: 'email',
-      });
-      if (!retry.error) {
-        data = retry.data;
-        error = null;
-      }
-    }
-
-    if (error) {
-      setLoading(false);
       setAuthError(error.message);
-      return;
-    }
-
-    // Ensure host name persists into admin table
-    if (data?.user) {
-      await supabase
-        .from('admin')
-        .upsert({
-          admin_id: data.user.id,
-          email: data.user.email,
-          name: fullName.trim(),
-          status: 'Active',
-        });
-      setLoading(false);
-      setCurrentPage('admin_dash');
-      fetchAdminData(data.user.id);
+    } else {
+      setAuthSuccess('A fresh verification link has been sent to your email.');
     }
   }
 
-  // 4. Send OTP for Forgot Password
-  async function handleForgotPasswordSendOtp(e) {
+  // 4. Send Password Reset Link
+  async function handleForgotPassword(e) {
     e.preventDefault();
     setLoading(true);
     setAuthError('');
     setAuthSuccess('');
 
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/`,
     });
 
     setLoading(false);
     if (error) {
       setAuthError(error.message);
     } else {
-      setForgotStep('otp');
-      setAuthSuccess('A 6-digit recovery code has been sent to your email.');
+      setForgotSubmitted(true);
     }
   }
 
-  // 5. Verify OTP & Set New Password
-  async function handleResetPasswordWithOtp(e) {
+  // 5. Update Password from Reset Link
+  async function handleUpdatePassword(e) {
     e.preventDefault();
     setLoading(true);
     setAuthError('');
     setAuthSuccess('');
 
     if (newPassword.length < 6) {
-      setAuthError('New password must be at least 6 characters.');
+      setAuthError('Password must be at least 6 characters.');
       setLoading(false);
       return;
     }
 
-    const { error: otpError } = await supabase.auth.verifyOtp({
-      email: email.trim(),
-      token: otp.trim(),
-      type: 'email',
-    });
-
-    if (otpError) {
-      setLoading(false);
-      setAuthError(otpError.message);
-      return;
-    }
-
-    const { error: updateError } = await supabase.auth.updateUser({
+    const { error } = await supabase.auth.updateUser({
       password: newPassword,
     });
 
     setLoading(false);
-    if (updateError) {
-      setAuthError(updateError.message);
+    if (error) {
+      setAuthError(error.message);
     } else {
-      setAuthSuccess('Password updated successfully! Entering dashboard...');
+      setAuthSuccess('Password changed successfully! Redirecting...');
       setTimeout(() => {
         setCurrentPage('admin_dash');
       }, 700);
@@ -849,7 +810,64 @@ export default function App() {
   }
 
   // ══════════════════════════════════════════════════════════
-  // VIEW 3: ADMIN AUTH (Login, Sign Up & Forgot Password)
+  // VIEW 3: RESET PASSWORD AFTER CLICKING EMAIL LINK
+  // ══════════════════════════════════════════════════════════
+  if (currentPage === 'reset_password') {
+    return (
+      <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', padding: 24 }}>
+        <div style={{ maxWidth: 420, width: '100%', backgroundColor: '#ffffff', borderRadius: 24, padding: 32, boxShadow: '0 12px 36px rgba(0,0,0,0.08)', border: '1px solid #ebebeb' }}>
+          <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Set New Password</h2>
+          <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px' }}>Enter your new password to regain access to your desk.</p>
+
+          {authError && (
+            <div style={{ backgroundColor: '#fff8f6', color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 16 }}>
+              {authError}
+            </div>
+          )}
+          {authSuccess && (
+            <div style={{ backgroundColor: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 16 }}>
+              {authSuccess}
+            </div>
+          )}
+
+          <form onSubmit={handleUpdatePassword}>
+            <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>New Password</label>
+              <input
+                type="password"
+                required
+                placeholder="At least 6 characters"
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+                style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              style={{
+                width: '100%',
+                padding: 14,
+                background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 12,
+                fontWeight: 700,
+                fontSize: 15,
+                cursor: 'pointer'
+              }}
+            >
+              {loading ? 'Saving...' : 'Update & Enter Dashboard'}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // VIEW 4: ADMIN AUTH (Login, Sign Up & Forgot Password)
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'admin_login' && !session) {
     return (
@@ -883,8 +901,8 @@ export default function App() {
 
           <div style={{ padding: '28px 24px' }}>
             
-            {/* Tab Buttons */}
-            {authMode !== 'forgot' && (
+            {/* Top Switcher Tabs */}
+            {authMode !== 'forgot' && signupStep !== 'link_sent' && (
               <div style={{
                 display: 'flex',
                 backgroundColor: '#f1f5f9',
@@ -933,17 +951,6 @@ export default function App() {
               </div>
             )}
 
-            <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', letterSpacing: '-0.02em', color: '#222222' }}>
-              {authMode === 'login' && 'Welcome Host'}
-              {authMode === 'signup' && (signupStep === 'form' ? 'Create Your Desk' : 'Verify Your Email')}
-              {authMode === 'forgot' && 'Reset Password'}
-            </h2>
-            <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px', lineHeight: 1.4 }}>
-              {authMode === 'login' && 'Sign in using your registered email and password.'}
-              {authMode === 'signup' && (signupStep === 'form' ? 'Fill in your details to set up your desk counter.' : 'Enter the 6-digit verification code sent to your inbox.')}
-              {authMode === 'forgot' && (forgotStep === 'email' ? 'Enter your email to receive a recovery code.' : 'Enter the 6-digit code and choose a new password.')}
-            </p>
-
             {authError && (
               <div style={{ backgroundColor: '#fff8f6', color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 20 }}>
                 {authError}
@@ -956,127 +963,226 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 1: INSTANT LOGIN (Email & Password) */}
+            {/* TAB 1: INSTANT SIGN IN (Email + Password) */}
             {authMode === 'login' && (
-              <form onSubmit={handleLogin}>
-                <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Email Address</label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="name@example.com"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
-                  />
-                </div>
+              <div>
+                <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', letterSpacing: '-0.02em', color: '#222222' }}>
+                  Welcome Host
+                </h2>
+                <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px', lineHeight: 1.4 }}>
+                  Sign in using your registered email and password.
+                </p>
 
-                <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 12 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Password</label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
-                  />
-                </div>
+                <form onSubmit={handleLogin}>
+                  <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Email Address</label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="name@example.com"
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                      style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                    />
+                  </div>
 
-                <div style={{ textAlign: 'right', marginBottom: 20 }}>
+                  <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 12 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Password</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={e => setPassword(e.target.value)}
+                      style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                    />
+                  </div>
+
+                  <div style={{ textAlign: 'right', marginBottom: 20 }}>
+                    <button
+                      type="button"
+                      onClick={() => switchAuthMode('forgot')}
+                      style={{ background: 'none', border: 'none', color: '#FF385C', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    style={{
+                      width: '100%',
+                      padding: 14,
+                      background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 12,
+                      fontWeight: 700,
+                      fontSize: 15,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {loading ? 'Signing in...' : 'Sign In'}
+                  </button>
+                </form>
+
+                <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#717171' }}>
+                  Don't have an account?{' '}
                   <button
                     type="button"
-                    onClick={() => switchAuthMode('forgot')}
-                    style={{ background: 'none', border: 'none', color: '#FF385C', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                    onClick={() => switchAuthMode('signup')}
+                    style={{ background: 'none', border: 'none', color: '#FF385C', fontWeight: 700, cursor: 'pointer', padding: 0 }}
                   >
-                    Forgot password?
+                    Sign Up
                   </button>
                 </div>
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  style={{
-                    width: '100%',
-                    padding: 14,
-                    background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: 12,
-                    fontWeight: 700,
-                    fontSize: 15,
-                    cursor: 'pointer'
-                  }}
-                >
-                  {loading ? 'Signing in...' : 'Sign In'}
-                </button>
-              </form>
+              </div>
             )}
 
-            {/* TAB 2: SIGN UP WITH MANDATORY NAME & OTP */}
+            {/* TAB 2: SIGN UP */}
             {authMode === 'signup' && (
               <div>
                 {signupStep === 'form' ? (
-                  <form onSubmit={handleSignUp}>
-                    <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
-                      <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                        Full Name <span style={{ color: '#FF385C' }}>*</span>
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="Dr. Adam or Clinic Host"
-                        value={fullName}
-                        onChange={e => setFullName(e.target.value)}
-                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
-                      />
+                  <div>
+                    <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', letterSpacing: '-0.02em', color: '#222222' }}>
+                      Create Your Desk
+                    </h2>
+                    <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px', lineHeight: 1.4 }}>
+                      Register your host account with email and password.
+                    </p>
+
+                    <form onSubmit={handleSignUp}>
+                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
+                        <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
+                          Full Name <span style={{ color: '#FF385C' }}>*</span>
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Dr. Adam or Clinic Host"
+                          value={fullName}
+                          onChange={e => setFullName(e.target.value)}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                        />
+                      </div>
+
+                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
+                        <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
+                          Email Address <span style={{ color: '#FF385C' }}>*</span>
+                        </label>
+                        <input
+                          type="email"
+                          required
+                          placeholder="name@example.com"
+                          value={email}
+                          onChange={e => setEmail(e.target.value)}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                        />
+                      </div>
+
+                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
+                        <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
+                          Password <span style={{ color: '#FF385C' }}>*</span>
+                        </label>
+                        <input
+                          type="password"
+                          required
+                          placeholder="At least 6 characters"
+                          value={password}
+                          onChange={e => setPassword(e.target.value)}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                        />
+                      </div>
+
+                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
+                        <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
+                          Confirm Password <span style={{ color: '#FF385C' }}>*</span>
+                        </label>
+                        <input
+                          type="password"
+                          required
+                          placeholder="Repeat password"
+                          value={confirmPassword}
+                          onChange={e => setConfirmPassword(e.target.value)}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        style={{
+                          width: '100%',
+                          padding: 14,
+                          background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: 12,
+                          fontWeight: 700,
+                          fontSize: 15,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {loading ? 'Sending verification link...' : 'Create Account'}
+                      </button>
+                    </form>
+
+                    <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#717171' }}>
+                      Already have an account?{' '}
+                      <button
+                        type="button"
+                        onClick={() => switchAuthMode('login')}
+                        style={{ background: 'none', border: 'none', color: '#FF385C', fontWeight: 700, cursor: 'pointer', padding: 0 }}
+                      >
+                        Sign In
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '8px 0' }}>
+                    <div style={{
+                      width: 60,
+                      height: 60,
+                      borderRadius: '50%',
+                      backgroundColor: '#ffeef1',
+                      color: '#FF385C',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginBottom: 16
+                    }}>
+                      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+                        <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
+                      </svg>
                     </div>
 
-                    <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
-                      <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                        Email Address <span style={{ color: '#FF385C' }}>*</span>
-                      </label>
-                      <input
-                        type="email"
-                        required
-                        placeholder="name@example.com"
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
-                      />
-                    </div>
+                    <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>
+                      Verification Link Sent
+                    </h2>
+                    <p style={{ color: '#717171', fontSize: 14, margin: '0 0 20px', lineHeight: 1.5 }}>
+                      We have sent an activation link to:<br />
+                      <strong style={{ color: '#222222' }}>{email}</strong>
+                    </p>
 
-                    <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
-                      <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                        Password <span style={{ color: '#FF385C' }}>*</span>
-                      </label>
-                      <input
-                        type="password"
-                        required
-                        placeholder="At least 6 characters"
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
-                      />
-                    </div>
-
-                    <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
-                      <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                        Confirm Password <span style={{ color: '#FF385C' }}>*</span>
-                      </label>
-                      <input
-                        type="password"
-                        required
-                        placeholder="Repeat password"
-                        value={confirmPassword}
-                        onChange={e => setConfirmPassword(e.target.value)}
-                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
-                      />
+                    <div style={{
+                      backgroundColor: '#f8fafc',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: 14,
+                      padding: 16,
+                      fontSize: 13,
+                      color: '#475569',
+                      lineHeight: 1.5,
+                      textAlign: 'left',
+                      marginBottom: 24
+                    }}>
+                      💡 <strong>Next steps:</strong> Open your email inbox, find the email from LiveQueue, and click <strong>Confirm email address</strong>. Once confirmed, you can log in with your password.
                     </div>
 
                     <button
-                      type="submit"
-                      disabled={loading}
+                      type="button"
+                      onClick={() => switchAuthMode('login')}
                       style={{
                         width: '100%',
                         padding: 14,
@@ -1086,145 +1192,106 @@ export default function App() {
                         borderRadius: 12,
                         fontWeight: 700,
                         fontSize: 15,
+                        cursor: 'pointer',
+                        marginBottom: 14
+                      }}
+                    >
+                      Go to Sign In
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleResendLink}
+                      disabled={resendLoading}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#717171',
+                        fontSize: 13,
+                        fontWeight: 600,
                         cursor: 'pointer'
                       }}
                     >
-                      {loading ? 'Sending verification code...' : 'Continue with OTP'}
+                      {resendLoading ? 'Resending...' : "Didn't get the email? Resend link"}
                     </button>
-                  </form>
-                ) : (
-                  <form onSubmit={handleVerifySignUpOtp}>
-                    <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
-                      <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                        Enter 6-Digit Email Code
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="• • • • • •"
-                        value={otp}
-                        onChange={e => setOtp(e.target.value)}
-                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 18, textAlign: 'center', letterSpacing: 6, fontWeight: 700, color: '#222222' }}
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={loading}
-                      style={{
-                        width: '100%',
-                        padding: 14,
-                        backgroundColor: '#222222',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: 12,
-                        fontWeight: 700,
-                        fontSize: 15,
-                        cursor: 'pointer',
-                        marginBottom: 16
-                      }}
-                    >
-                      {loading ? 'Verifying...' : 'Verify Code & Enter'}
-                    </button>
-
-                    <div style={{ textAlign: 'center' }}>
-                      <button
-                        type="button"
-                        onClick={() => setSignupStep('form')}
-                        style={{ background: 'none', border: 'none', color: '#717171', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                      >
-                        ← Edit signup details
-                      </button>
-                    </div>
-                  </form>
+                  </div>
                 )}
               </div>
             )}
 
-            {/* TAB 3: FORGOT PASSWORD FLOW */}
+            {/* TAB 3: FORGOT PASSWORD */}
             {authMode === 'forgot' && (
               <div>
-                {forgotStep === 'email' ? (
-                  <form onSubmit={handleForgotPasswordSendOtp}>
-                    <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
-                      <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Registered Email</label>
-                      <input
-                        type="email"
-                        required
-                        placeholder="Enter your registered email"
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
-                      />
-                    </div>
+                {!forgotSubmitted ? (
+                  <div>
+                    <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', letterSpacing: '-0.02em', color: '#222222' }}>
+                      Reset Password
+                    </h2>
+                    <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px', lineHeight: 1.4 }}>
+                      Enter your email to receive a password recovery link.
+                    </p>
 
-                    <button
-                      type="submit"
-                      disabled={loading}
-                      style={{
-                        width: '100%',
-                        padding: 14,
-                        background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: 12,
-                        fontWeight: 700,
-                        fontSize: 15,
-                        cursor: 'pointer',
-                        marginBottom: 16
-                      }}
-                    >
-                      {loading ? 'Sending code...' : 'Send 6-Digit Reset Code'}
-                    </button>
-                  </form>
+                    <form onSubmit={handleForgotPassword}>
+                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
+                        <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Registered Email</label>
+                        <input
+                          type="email"
+                          required
+                          placeholder="name@example.com"
+                          value={email}
+                          onChange={e => setEmail(e.target.value)}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        style={{
+                          width: '100%',
+                          padding: 14,
+                          background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: 12,
+                          fontWeight: 700,
+                          fontSize: 15,
+                          cursor: 'pointer',
+                          marginBottom: 16
+                        }}
+                      >
+                        {loading ? 'Sending link...' : 'Send Reset Link'}
+                      </button>
+                    </form>
+                  </div>
                 ) : (
-                  <form onSubmit={handleResetPasswordWithOtp}>
-                    <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
-                      <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>6-Digit OTP</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="• • • • • •"
-                        value={otp}
-                        onChange={e => setOtp(e.target.value)}
-                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 18, textAlign: 'center', letterSpacing: 6, fontWeight: 700, color: '#222222' }}
-                      />
+                  <div style={{ textAlign: 'center', padding: '10px 0' }}>
+                    <div style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: '50%',
+                      backgroundColor: '#f0fdf4',
+                      color: '#166534',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginBottom: 16
+                    }}>
+                      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                      </svg>
                     </div>
 
-                    <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
-                      <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>New Password</label>
-                      <input
-                        type="password"
-                        required
-                        placeholder="At least 6 characters"
-                        value={newPassword}
-                        onChange={e => setNewPassword(e.target.value)}
-                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={loading}
-                      style={{
-                        width: '100%',
-                        padding: 14,
-                        backgroundColor: '#222222',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: 12,
-                        fontWeight: 700,
-                        fontSize: 15,
-                        cursor: 'pointer',
-                        marginBottom: 16
-                      }}
-                    >
-                      {loading ? 'Updating password...' : 'Update Password & Enter'}
-                    </button>
-                  </form>
+                    <h2 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>
+                      Reset Link Sent
+                    </h2>
+                    <p style={{ color: '#717171', fontSize: 13, lineHeight: 1.5, margin: '0 0 20px' }}>
+                      We sent a password reset link to <strong>{email}</strong>. Click the link in your email to set a new password.
+                    </p>
+                  </div>
                 )}
 
-                <div style={{ textAlign: 'center' }}>
+                <div style={{ textAlign: 'center', marginTop: 12 }}>
                   <button
                     type="button"
                     onClick={() => switchAuthMode('login')}
@@ -1236,32 +1303,6 @@ export default function App() {
               </div>
             )}
 
-            {authMode === 'login' && (
-              <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#717171' }}>
-                Don't have an account?{' '}
-                <button
-                  type="button"
-                  onClick={() => switchAuthMode('signup')}
-                  style={{ background: 'none', border: 'none', color: '#FF385C', fontWeight: 700, cursor: 'pointer', padding: 0 }}
-                >
-                  Sign Up
-                </button>
-              </div>
-            )}
-
-            {authMode === 'signup' && (
-              <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#717171' }}>
-                Already have an account?{' '}
-                <button
-                  type="button"
-                  onClick={() => switchAuthMode('login')}
-                  style={{ background: 'none', border: 'none', color: '#FF385C', fontWeight: 700, cursor: 'pointer', padding: 0 }}
-                >
-                  Sign In
-                </button>
-              </div>
-            )}
-
           </div>
         </div>
       </div>
@@ -1269,7 +1310,7 @@ export default function App() {
   }
 
   // ══════════════════════════════════════════════════════════
-  // VIEW 4: ADMIN CONTROLLER DASHBOARD
+  // VIEW 5: ADMIN CONTROLLER DASHBOARD
   // ══════════════════════════════════════════════════════════
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', padding: '0 20px 60px' }}>

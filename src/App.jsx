@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { QRCodeSVG } from 'qrcode.react';
+import { loadRazorpayScript } from './razorpay';
+
+const TOKEN_PACKS = [
+  { id: 'pack_500', name: 'Starter', tokens: 500, price: 99, tag: null },
+  { id: 'pack_1500', name: 'Standard', tokens: 1500, price: 249, tag: 'Popular' },
+  { id: 'pack_5000', name: 'Pro', tokens: 5000, price: 699, tag: 'Best Value' },
+];
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -23,6 +30,10 @@ export default function App() {
   const [remainingTokens, setRemainingTokens] = useState(1500);
   const [accountStatus, setAccountStatus] = useState('Active');
   const [adminError, setAdminError] = useState('');
+
+  // Recharge & Payment state
+  const [isRechargeOpen, setIsRechargeOpen] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Admin Edit Counter state
   const [isEditing, setIsEditing] = useState(false);
@@ -218,7 +229,14 @@ export default function App() {
       setAdminError(error.message);
     } else {
       setQueue({ ...queue, queue_position: nextPos });
-      setRemainingTokens(prev => Math.max(0, prev - 1));
+      const newTokens = Math.max(0, remainingTokens - 1);
+      setRemainingTokens(newTokens);
+      if (session?.user?.id) {
+        await supabase
+          .from('usage')
+          .update({ remaining_tokens: newTokens })
+          .eq('admin_id', session.user.id);
+      }
     }
   }
 
@@ -291,6 +309,58 @@ export default function App() {
       setEditSlug(cleanSlug);
       setIsEditing(false);
     }
+  }
+
+  async function handleRecharge(pack) {
+    setIsProcessing(true);
+    setAdminError('');
+
+    const loaded = await loadRazorpayScript();
+    if (!loaded) {
+      setAdminError('Razorpay failed to initialize. Please check your network connection.');
+      setIsProcessing(false);
+      return;
+    }
+
+    const options = {
+      key: import.meta.env.VITE_RAZORPAY_KEY_ID,
+      amount: pack.price * 100, // paise
+      currency: 'INR',
+      name: 'LiveQueue',
+      description: `Recharge ${pack.tokens.toLocaleString()} Tokens`,
+      handler: async function (response) {
+        try {
+          const updatedTokens = (remainingTokens || 0) + pack.tokens;
+
+          const { error } = await supabase
+            .from('usage')
+            .update({ remaining_tokens: updatedTokens })
+            .eq('admin_id', session.user.id);
+
+          if (error) throw error;
+
+          setRemainingTokens(updatedTokens);
+          setIsRechargeOpen(false);
+        } catch (err) {
+          console.error('Balance update failed:', err);
+          setAdminError('Payment captured, but failed to credit tokens. Please contact support.');
+        } finally {
+          setIsProcessing(false);
+        }
+      },
+      prefill: {
+        email: session?.user?.email || '',
+      },
+      theme: {
+        color: '#FF385C',
+      },
+      modal: {
+        ondismiss: () => setIsProcessing(false),
+      },
+    };
+
+    const rzp = new window.Razorpay(options);
+    rzp.open();
   }
 
   const isBlocked = accountStatus === 'Block' || remainingTokens <= 0;
@@ -733,7 +803,7 @@ export default function App() {
 
       <div style={{ maxWidth: 480, margin: '24px auto 0' }}>
         
-        {/* Token Balance Widget */}
+        {/* Token Balance Widget with Recharge Option */}
         <div style={{
           backgroundColor: '#ffffff',
           borderRadius: 20,
@@ -749,15 +819,40 @@ export default function App() {
             <div style={{ fontSize: 14, fontWeight: 700, color: '#222222' }}>Remaining Balance</div>
             <div style={{ fontSize: 12, color: '#717171' }}>Available calls in your quota</div>
           </div>
-          <div style={{
-            fontSize: 20,
-            fontWeight: 800,
-            color: remainingTokens <= 100 ? '#c13515' : '#008a05',
-            backgroundColor: remainingTokens <= 100 ? '#fff8f6' : '#f0fdf4',
-            padding: '6px 14px',
-            borderRadius: 999
-          }}>
-            {remainingTokens}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              fontSize: 20,
+              fontWeight: 800,
+              color: remainingTokens <= 100 ? '#c13515' : '#008a05',
+              backgroundColor: remainingTokens <= 100 ? '#fff8f6' : '#f0fdf4',
+              padding: '6px 14px',
+              borderRadius: 999
+            }}>
+              {remainingTokens}
+            </div>
+            <button
+              onClick={() => setIsRechargeOpen(true)}
+              style={{
+                background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                color: '#ffffff',
+                border: 'none',
+                padding: '8px 14px',
+                borderRadius: 999,
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                boxShadow: '0 2px 8px rgba(255, 56, 92, 0.25)'
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Recharge / Buy Token
+            </button>
           </div>
         </div>
 
@@ -951,6 +1046,106 @@ export default function App() {
         )}
 
       </div>
+
+      {/* Recharge / Buy Token Modal */}
+      {isRechargeOpen && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.45)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 20,
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: '#ffffff',
+            borderRadius: 24,
+            padding: 28,
+            maxWidth: 440,
+            width: '100%',
+            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.2)',
+            border: '1px solid #ebebeb'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <div>
+                <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0, color: '#222222' }}>Recharge Quota</h3>
+                <p style={{ fontSize: 13, color: '#717171', margin: '4px 0 0' }}>Select a package to add calls to your desk</p>
+              </div>
+              <button
+                onClick={() => !isProcessing && setIsRechargeOpen(false)}
+                style={{ background: 'none', border: 'none', fontSize: 20, color: '#999999', cursor: 'pointer', padding: 4 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {TOKEN_PACKS.map(pack => (
+                <div
+                  key={pack.id}
+                  onClick={() => !isProcessing && handleRecharge(pack)}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '16px 18px',
+                    borderRadius: 16,
+                    border: '1.5px solid #ebebeb',
+                    backgroundColor: '#fafafa',
+                    cursor: isProcessing ? 'wait' : 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.borderColor = '#FF385C';
+                    e.currentTarget.style.backgroundColor = '#fff8f9';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.borderColor = '#ebebeb';
+                    e.currentTarget.style.backgroundColor = '#fafafa';
+                  }}
+                >
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 16, fontWeight: 800, color: '#222222' }}>
+                        {pack.tokens.toLocaleString()} Calls
+                      </span>
+                      {pack.tag && (
+                        <span style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          color: '#FF385C',
+                          backgroundColor: '#ffeef1',
+                          padding: '2px 8px',
+                          borderRadius: 999
+                        }}>
+                          {pack.tag}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#717171', marginTop: 2 }}>{pack.name} Pack</div>
+                  </div>
+
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: '#222222' }}>₹{pack.price}</div>
+                    <div style={{ fontSize: 11, color: '#94a3b8' }}>One-time</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {isProcessing && (
+              <p style={{ textAlign: 'center', fontSize: 13, color: '#FF385C', fontWeight: 600, marginTop: 16, margin: '16px 0 0' }}>
+                Connecting to Razorpay gateway...
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

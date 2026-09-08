@@ -18,6 +18,7 @@ export default function App() {
   const [activeQueue, setActiveQueue] = useState(null);
   const [lookupError, setLookupError] = useState('');
   const prevPosRef = useRef(null);
+  const isFetchingRef = useRef(false);
 
   // Admin Auth state
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'signup' | 'forgot'
@@ -152,7 +153,7 @@ export default function App() {
     return () => supabase.removeChannel(channel);
   }, [currentPage, activeQueue?.queue_id]);
 
-  // Sync edit form inputs whenever the selected queue changes
+  // Sync edit form inputs whenever selected queue changes
   useEffect(() => {
     if (currentQueue) {
       setEditTitle(currentQueue.queue_title);
@@ -188,62 +189,68 @@ export default function App() {
   }
 
   async function fetchAdminData(adminId) {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     setAdminError('');
 
-    const { data: adminData } = await supabase
-      .from('admin')
-      .select('status, valid_until')
-      .eq('admin_id', adminId)
-      .maybeSingle();
+    try {
+      const { data: adminData } = await supabase
+        .from('admin')
+        .select('status, valid_until')
+        .eq('admin_id', adminId)
+        .maybeSingle();
 
-    if (adminData) {
-      setAccountStatus(adminData.status);
-    } else {
-      await supabase.from('admin').insert([{ admin_id: adminId, status: 'Active' }]);
-      setAccountStatus('Active');
-    }
-
-    const { data: usageData } = await supabase
-      .from('usage')
-      .select('remaining_tokens')
-      .eq('admin_id', adminId)
-      .maybeSingle();
-
-    if (usageData) {
-      setRemainingTokens(usageData.remaining_tokens);
-    } else {
-      await supabase.from('usage').insert([{ admin_id: adminId, remaining_tokens: 1500 }]);
-      setRemainingTokens(1500);
-    }
-
-    // Fetch all queues belonging to this admin
-    const { data: queueList } = await supabase
-      .from('queue_details')
-      .select('*')
-      .eq('admin_id', adminId)
-      .order('queue_id', { ascending: true });
-
-    if (queueList && queueList.length > 0) {
-      setQueues(queueList);
-      setSelectedQueueId(queueList[0].queue_id);
-    } else {
-      // First time auto-creation of a default queue
-      const defaultSlug = `desk-${Math.floor(1000 + Math.random() * 9000)}`;
-      const { data: newQueue } = await supabase
-        .from('queue_details')
-        .insert([{
-          admin_id: adminId,
-          queue_title: 'Counter 1',
-          queue_subtitle: 'Consultation Desk',
-          slug: defaultSlug,
-          queue_position: 0
-        }])
-        .select()
-        .single();
-      if (newQueue) {
-        setQueues([newQueue]);
-        setSelectedQueueId(newQueue.queue_id);
+      if (adminData) {
+        setAccountStatus(adminData.status);
+      } else {
+        await supabase.from('admin').insert([{ admin_id: adminId, status: 'Active' }]);
+        setAccountStatus('Active');
       }
+
+      const { data: usageData } = await supabase
+        .from('usage')
+        .select('remaining_tokens')
+        .eq('admin_id', adminId)
+        .maybeSingle();
+
+      if (usageData) {
+        setRemainingTokens(usageData.remaining_tokens);
+      } else {
+        await supabase.from('usage').insert([{ admin_id: adminId, remaining_tokens: 1500 }]);
+        setRemainingTokens(1500);
+      }
+
+      // Fetch all queues belonging to this admin
+      const { data: queueList } = await supabase
+        .from('queue_details')
+        .select('*')
+        .eq('admin_id', adminId)
+        .order('queue_id', { ascending: true });
+
+      if (queueList && queueList.length > 0) {
+        setQueues(queueList);
+        setSelectedQueueId(queueList[0].queue_id);
+      } else {
+        // Initial creation of exactly one default desk
+        const defaultSlug = `desk-${Math.floor(1000 + Math.random() * 9000)}`;
+        const { data: newQueue } = await supabase
+          .from('queue_details')
+          .insert([{
+            admin_id: adminId,
+            queue_title: 'Counter 1',
+            queue_subtitle: 'Consultation Desk',
+            slug: defaultSlug,
+            queue_position: 0
+          }])
+          .select()
+          .single();
+        if (newQueue) {
+          setQueues([newQueue]);
+          setSelectedQueueId(newQueue.queue_id);
+        }
+      }
+    } finally {
+      isFetchingRef.current = false;
     }
   }
 
@@ -348,7 +355,7 @@ export default function App() {
     setAuthError('');
 
     if (newPassword.length < 6) {
-      setAuthError('Password must be at least 6 characters.');
+      setAuthError('New password must be at least 6 characters.');
       setLoading(false);
       return;
     }
@@ -598,7 +605,7 @@ export default function App() {
   const currentPublicLink = currentQueue?.slug ? `${window.location.origin}/${currentQueue.slug}` : '';
 
   // ══════════════════════════════════════════════════════════
-  // VIEW 1: PUBLIC DISPLAY
+  // VIEW 1: PUBLIC / TV DISPLAY
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'status') {
     return (
@@ -1503,7 +1510,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Calling Actions */}
+            {/* Actions */}
             <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
               <button
                 onClick={previousQueue}

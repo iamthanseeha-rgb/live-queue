@@ -173,8 +173,7 @@ export default function App() {
   }
 
   async function fetchAdminData(adminId) {
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
+    if (!adminId) return;
     setAdminError('');
 
     try {
@@ -205,7 +204,7 @@ export default function App() {
       }
 
       // Fetch the single queue for this admin
-      const { data: queueList } = await supabase
+      const { data: queueList, error: qErr } = await supabase
         .from('queue_details')
         .select('*')
         .eq('admin_id', adminId)
@@ -217,7 +216,7 @@ export default function App() {
         setEditTitle(q.queue_title);
         setEditSubtitle(q.queue_subtitle || '');
         setEditSlug(q.slug || '');
-      } else {
+      } else if (!qErr) {
         const defaultSlug = `desk-${Math.floor(1000 + Math.random() * 9000)}`;
         const { data: newQueue } = await supabase
           .from('queue_details')
@@ -237,8 +236,9 @@ export default function App() {
           setEditSlug(newQueue.slug || '');
         }
       }
-    } finally {
-      isFetchingRef.current = false;
+    } catch (err) {
+      console.error('fetchAdminData error:', err);
+      setAdminError('Failed to load controller data. Please refresh.');
     }
   }
 
@@ -688,9 +688,14 @@ export default function App() {
       >
         {/* Top Floating Pill Button */}
         <button
-          onClick={() => {
+          onClick={async () => {
             window.history.replaceState({}, '', '/');
-            setCurrentPage(session ? 'admin_dash' : 'home');
+            if (session) {
+              setCurrentPage('admin_dash');
+              await fetchAdminData(session.user.id);
+            } else {
+              setCurrentPage('home');
+            }
           }}
           style={{
             position: 'absolute',
@@ -888,7 +893,10 @@ export default function App() {
             </button>
             {session ? (
               <button
-                onClick={() => setCurrentPage('admin_dash')}
+                onClick={async () => {
+                  setCurrentPage('admin_dash');
+                  await fetchAdminData(session.user.id);
+                }}
                 style={{ background: '#222222', color: '#ffffff', border: 'none', padding: '10px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
               >
                 Dashboard
@@ -1009,9 +1017,14 @@ export default function App() {
 
           <div>
             <button
-              onClick={() => {
+              onClick={async () => {
                 window.history.replaceState({}, '', '/');
-                setCurrentPage(session ? 'admin_dash' : 'home');
+                if (session) {
+                  setCurrentPage('admin_dash');
+                  await fetchAdminData(session.user.id);
+                } else {
+                  setCurrentPage('home');
+                }
               }}
               style={{ background: '#f7f7f7', color: '#222222', border: '1px solid #dddddd', padding: '9px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
             >

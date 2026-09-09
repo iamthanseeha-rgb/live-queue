@@ -982,7 +982,7 @@ export default function App() {
   }
 
   // ══════════════════════════════════════════════════════════
-  // VIEW: CONTACT US (AIRBNB STYLE)
+  // VIEW: CONTACT US (AIRBNB STYLE - CLEAN)
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'contact') {
     const whatsappUrl = "https://wa.me/918921677207?text=Hi%20LiveQueue%20Team%2C%20I%20have%20an%20issue%2Fsuggestion%3A";
@@ -1052,22 +1052,15 @@ export default function App() {
               backgroundColor: '#ffffff',
               border: '1.5px solid #ffe4e6',
               borderRadius: 28,
-              padding: '32px 24px',
+              padding: '36px 24px',
               boxShadow: '0 16px 40px -8px rgba(255, 56, 92, 0.12), 0 4px 16px rgba(0,0,0,0.04)',
               textAlign: 'center'
             }}>
-              {/* WhatsApp Icon Circle */}
-              <div style={{ width: 64, height: 64, borderRadius: '50%', backgroundColor: '#25D366', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', marginBottom: 16, boxShadow: '0 6px 18px rgba(37, 211, 102, 0.35)' }}>
-                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
-                </svg>
-              </div>
-
               <div style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 1.5, color: '#94a3b8', fontWeight: 800 }}>
                 Direct WhatsApp Support
               </div>
               
-              <div style={{ fontSize: '1.6rem', fontWeight: 800, color: '#222222', margin: '8px 0 20px', letterSpacing: '-0.02em' }}>
+              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#222222', margin: '8px 0 24px', letterSpacing: '-0.02em' }}>
                 +91 8921677207
               </div>
 

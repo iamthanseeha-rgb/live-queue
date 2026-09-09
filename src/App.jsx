@@ -11,7 +11,7 @@ const TOKEN_PACKS = [
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [currentPage, setCurrentPage] = useState('home'); // 'home' | 'admin_login' | 'status' | 'admin_dash' | 'reset_password'
+  const [currentPage, setCurrentPage] = useState('home'); // 'home' | 'admin_login' | 'status' | 'admin_dash' | 'reset_password' | 'contact'
   
   // Public search & status state
   const [inputQuery, setInputQuery] = useState('');
@@ -75,6 +75,7 @@ export default function App() {
 
   const getRouteSlug = () => {
     const path = window.location.pathname.replace(/^\/+|\/+$/g, '');
+    if (path === 'contact') return 'contact';
     if (path && path !== '' && path !== 'index.html') {
       return decodeURIComponent(path).toLowerCase();
     }
@@ -94,7 +95,9 @@ export default function App() {
 
   useEffect(() => {
     const slug = getRouteSlug();
-    if (slug) {
+    if (slug === 'contact') {
+      setCurrentPage('contact');
+    } else if (slug) {
       setCurrentPage('status');
       fetchQueueBySlug(slug);
     }
@@ -873,7 +876,16 @@ export default function App() {
             </span>
           </div>
 
-          <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button
+              onClick={() => {
+                window.history.pushState({}, '', '/contact');
+                setCurrentPage('contact');
+              }}
+              style={{ background: 'transparent', border: 'none', color: '#717171', padding: '8px 12px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+            >
+              Contact Us
+            </button>
             {session ? (
               <button
                 onClick={() => setCurrentPage('admin_dash')}
@@ -963,6 +975,132 @@ export default function App() {
                 {lookupError}
               </div>
             )}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // VIEW: CONTACT US (AIRBNB STYLE)
+  // ══════════════════════════════════════════════════════════
+  if (currentPage === 'contact') {
+    const whatsappUrl = "https://wa.me/918921677207?text=Hi%20LiveQueue%20Team%2C%20I%20have%20an%20issue%2Fsuggestion%3A";
+
+    return (
+      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', display: 'flex', flexDirection: 'column' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: '1px solid #ebebeb' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => {
+            window.history.replaceState({}, '', '/');
+            setCurrentPage('home');
+          }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <line x1="7" y1="8" x2="17" y2="8" />
+                <line x1="7" y1="12" x2="13" y2="12" />
+                <line x1="7" y1="16" x2="10" y2="16" />
+              </svg>
+            </div>
+            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: '#222222' }}>
+              live<span style={{ color: '#FF385C' }}>queue</span>
+            </span>
+          </div>
+
+          <div>
+            <button
+              onClick={() => {
+                window.history.replaceState({}, '', '/');
+                setCurrentPage(session ? 'admin_dash' : 'home');
+              }}
+              style={{ background: '#f7f7f7', color: '#222222', border: '1px solid #dddddd', padding: '9px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+            >
+              ← Back
+            </button>
+          </div>
+        </header>
+
+        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px 80px', textAlign: 'center' }}>
+          <div style={{ maxWidth: 520, width: '100%' }}>
+            
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 14px',
+              borderRadius: 999,
+              background: '#fff1f2',
+              border: '1px solid #fecdd3',
+              color: '#FF385C',
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: 1.2,
+              textTransform: 'uppercase',
+              marginBottom: 16
+            }}>
+              Support & Feedback
+            </div>
+
+            <h1 style={{ fontSize: 'clamp(2rem, 5vw, 2.8rem)', fontWeight: 800, margin: '0 0 12px', letterSpacing: '-0.03em', color: '#222222' }}>
+              Contact Us
+            </h1>
+            <p style={{ fontSize: 16, color: '#717171', margin: '0 0 32px', lineHeight: 1.5 }}>
+              Please contact us for any issues or suggestions. We're here to help you keep your queue flowing seamlessly.
+            </p>
+
+            <div style={{
+              backgroundColor: '#ffffff',
+              border: '1.5px solid #ffe4e6',
+              borderRadius: 28,
+              padding: '32px 24px',
+              boxShadow: '0 16px 40px -8px rgba(255, 56, 92, 0.12), 0 4px 16px rgba(0,0,0,0.04)',
+              textAlign: 'center'
+            }}>
+              {/* WhatsApp Icon Circle */}
+              <div style={{ width: 64, height: 64, borderRadius: '50%', backgroundColor: '#25D366', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', marginBottom: 16, boxShadow: '0 6px 18px rgba(37, 211, 102, 0.35)' }}>
+                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+                </svg>
+              </div>
+
+              <div style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 1.5, color: '#94a3b8', fontWeight: 800 }}>
+                Direct WhatsApp Support
+              </div>
+              
+              <div style={{ fontSize: '1.6rem', fontWeight: 800, color: '#222222', margin: '8px 0 20px', letterSpacing: '-0.02em' }}>
+                +91 8921677207
+              </div>
+
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 10,
+                  width: '100%',
+                  maxWidth: 320,
+                  padding: '14px 24px',
+                  borderRadius: 999,
+                  background: '#25D366',
+                  color: '#ffffff',
+                  fontSize: 15,
+                  fontWeight: 700,
+                  textDecoration: 'none',
+                  boxShadow: '0 4px 14px rgba(37, 211, 102, 0.35)',
+                  boxSizing: 'border-box'
+                }}
+              >
+                Chat on WhatsApp ↗
+              </a>
+            </div>
+
+            <div style={{ marginTop: 28, fontSize: 13, color: '#94a3b8' }}>
+              Typically replies within minutes • Monday to Sunday
+            </div>
+
           </div>
         </main>
       </div>
@@ -1378,7 +1516,19 @@ export default function App() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button
-            onClick={() => setCurrentPage('home')}
+            onClick={() => {
+              window.history.pushState({}, '', '/contact');
+              setCurrentPage('contact');
+            }}
+            style={{ background: 'transparent', border: 'none', color: '#717171', padding: '7px 8px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
+          >
+            Contact
+          </button>
+          <button
+            onClick={() => {
+              window.history.replaceState({}, '', '/');
+              setCurrentPage('home');
+            }}
             style={{ background: '#ffffff', border: '1px solid #dddddd', padding: '7px 13px', borderRadius: 999, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
           >
             Home

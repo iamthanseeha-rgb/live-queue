@@ -111,7 +111,7 @@ code {
 }
 /* Force inputs to stay white with black text across all dark mode browsers & WebViews */
 :root {
-  color-scheme: light !only;
+  color-scheme: light;
 }
 
 input,

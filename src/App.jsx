@@ -34,19 +34,11 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authSuccess, setAuthSuccess] = useState('');
   
-  // Multi-Queue & Desk state
-  const [queues, setQueues] = useState([]);
-  const [selectedQueueId, setSelectedQueueId] = useState(null);
+  // Single Desk & Token state
+  const [queue, setQueue] = useState(null);
   const [remainingTokens, setRemainingTokens] = useState(1500);
   const [accountStatus, setAccountStatus] = useState('Active');
   const [adminError, setAdminError] = useState('');
-
-  // Create Queue Modal State
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [newSubtitle, setNewSubtitle] = useState('');
-  const [newSlug, setNewSlug] = useState('');
-  const [createLoading, setCreateLoading] = useState(false);
 
   // Recharge modal state
   const [isRechargeOpen, setIsRechargeOpen] = useState(false);
@@ -57,8 +49,6 @@ export default function App() {
   const [editTitle, setEditTitle] = useState('');
   const [editSubtitle, setEditSubtitle] = useState('');
   const [editSlug, setEditSlug] = useState('');
-
-  const currentQueue = queues.find(q => q.queue_id === selectedQueueId) || queues[0] || null;
 
   const playAlertSound = () => {
     try {
@@ -153,15 +143,6 @@ export default function App() {
     return () => supabase.removeChannel(channel);
   }, [currentPage, activeQueue?.queue_id]);
 
-  // Sync edit form inputs whenever selected queue changes
-  useEffect(() => {
-    if (currentQueue) {
-      setEditTitle(currentQueue.queue_title);
-      setEditSubtitle(currentQueue.queue_subtitle || '');
-      setEditSlug(currentQueue.slug || '');
-    }
-  }, [selectedQueueId, queues]);
-
   async function fetchQueueBySlug(slug) {
     setLookupError('');
     const { data, error } = await supabase
@@ -220,7 +201,7 @@ export default function App() {
         setRemainingTokens(1500);
       }
 
-      // Fetch all queues belonging to this admin
+      // Fetch the single queue for this admin
       const { data: queueList } = await supabase
         .from('queue_details')
         .select('*')
@@ -228,10 +209,12 @@ export default function App() {
         .order('queue_id', { ascending: true });
 
       if (queueList && queueList.length > 0) {
-        setQueues(queueList);
-        setSelectedQueueId(queueList[0].queue_id);
+        const q = queueList[0];
+        setQueue(q);
+        setEditTitle(q.queue_title);
+        setEditSubtitle(q.queue_subtitle || '');
+        setEditSlug(q.slug || '');
       } else {
-        // Initial creation of exactly one default desk
         const defaultSlug = `desk-${Math.floor(1000 + Math.random() * 9000)}`;
         const { data: newQueue } = await supabase
           .from('queue_details')
@@ -245,8 +228,10 @@ export default function App() {
           .select()
           .single();
         if (newQueue) {
-          setQueues([newQueue]);
-          setSelectedQueueId(newQueue.queue_id);
+          setQueue(newQueue);
+          setEditTitle(newQueue.queue_title);
+          setEditSubtitle(newQueue.queue_subtitle || '');
+          setEditSlug(newQueue.slug || '');
         }
       }
     } finally {
@@ -355,7 +340,7 @@ export default function App() {
     setAuthError('');
 
     if (newPassword.length < 6) {
-      setAuthError('New password must be at least 6 characters.');
+      setAuthError('Password must be at least 6 characters.');
       setLoading(false);
       return;
     }
@@ -370,102 +355,21 @@ export default function App() {
     }
   }
 
-  // Queue Operations
-  async function handleCreateNewQueue(e) {
-    e.preventDefault();
-    setAdminError('');
-    setCreateLoading(true);
-
-    const cleanSlug = newSlug
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9-]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
-
-    if (!cleanSlug) {
-      setAdminError('URL slug cannot be empty.');
-      setCreateLoading(false);
-      return;
-    }
-
-    if (/^\d+$/.test(cleanSlug)) {
-      setAdminError('Slug cannot be numbers only. Add letters (e.g. room-2).');
-      setCreateLoading(false);
-      return;
-    }
-
-    const { data: newQueue, error } = await supabase
-      .from('queue_details')
-      .insert([{
-        admin_id: session.user.id,
-        queue_title: newTitle.trim(),
-        queue_subtitle: newSubtitle.trim() || null,
-        slug: cleanSlug,
-        queue_position: 0
-      }])
-      .select()
-      .single();
-
-    setCreateLoading(false);
-
-    if (error) {
-      if (error.code === '23505') {
-        setAdminError(`The custom link /${cleanSlug} is already in use. Please pick another.`);
-      } else {
-        setAdminError(error.message);
-      }
-    } else if (newQueue) {
-      const updatedList = [...queues, newQueue];
-      setQueues(updatedList);
-      setSelectedQueueId(newQueue.queue_id);
-      setIsCreateOpen(false);
-      setNewTitle('');
-      setNewSubtitle('');
-      setNewSlug('');
-    }
-  }
-
-  async function handleDeleteQueue(queueId) {
-    if (queues.length <= 1) {
-      alert('You must keep at least one active desk counter.');
-      return;
-    }
-
-    if (!window.confirm('Are you sure you want to delete this desk queue? Its public link will stop working.')) {
-      return;
-    }
-
-    setAdminError('');
-    const { error } = await supabase
-      .from('queue_details')
-      .delete()
-      .eq('queue_id', queueId);
-
-    if (error) {
-      setAdminError(error.message);
-    } else {
-      const remaining = queues.filter(q => q.queue_id !== queueId);
-      setQueues(remaining);
-      setSelectedQueueId(remaining[0].queue_id);
-      setIsEditing(false);
-    }
-  }
-
+  // Queue Counter Controls
   async function advanceQueue() {
-    if (!currentQueue) return;
+    if (!queue) return;
     setAdminError('');
-    const nextPos = currentQueue.queue_position + 1;
+    const nextPos = queue.queue_position + 1;
 
     const { error } = await supabase
       .from('queue_details')
       .update({ queue_position: nextPos, updated_at: new Date().toISOString() })
-      .eq('queue_id', currentQueue.queue_id);
+      .eq('queue_id', queue.queue_id);
 
     if (error) {
       setAdminError(error.message);
     } else {
-      setQueues(queues.map(q => q.queue_id === currentQueue.queue_id ? { ...q, queue_position: nextPos } : q));
+      setQueue({ ...queue, queue_position: nextPos });
       const newTokens = Math.max(0, remainingTokens - 1);
       setRemainingTokens(newTokens);
       if (session?.user?.id) {
@@ -478,33 +382,33 @@ export default function App() {
   }
 
   async function previousQueue() {
-    if (!currentQueue || currentQueue.queue_position <= 0) return;
+    if (!queue || queue.queue_position <= 0) return;
     setAdminError('');
-    const prevPos = currentQueue.queue_position - 1;
+    const prevPos = queue.queue_position - 1;
 
     const { error } = await supabase
       .from('queue_details')
       .update({ queue_position: prevPos, updated_at: new Date().toISOString() })
-      .eq('queue_id', currentQueue.queue_id);
+      .eq('queue_id', queue.queue_id);
 
     if (error) {
       setAdminError(error.message);
     } else {
-      setQueues(queues.map(q => q.queue_id === currentQueue.queue_id ? { ...q, queue_position: prevPos } : q));
+      setQueue({ ...queue, queue_position: prevPos });
     }
   }
 
   async function resetQueue() {
-    if (!currentQueue || !window.confirm(`Reset "${currentQueue.queue_title}" back to token 0?`)) return;
+    if (!queue || !window.confirm(`Reset "${queue.queue_title}" back to token 0?`)) return;
     const { error } = await supabase
       .from('queue_details')
       .update({ queue_position: 0, updated_at: new Date().toISOString() })
-      .eq('queue_id', currentQueue.queue_id);
+      .eq('queue_id', queue.queue_id);
 
     if (error) {
       setAdminError(error.message);
     } else {
-      setQueues(queues.map(q => q.queue_id === currentQueue.queue_id ? { ...q, queue_position: 0 } : q));
+      setQueue({ ...queue, queue_position: 0 });
     }
   }
 
@@ -536,7 +440,7 @@ export default function App() {
         queue_subtitle: editSubtitle,
         slug: cleanSlug
       })
-      .eq('queue_id', currentQueue.queue_id);
+      .eq('queue_id', queue.queue_id);
 
     if (error) {
       if (error.code === '23505') {
@@ -545,12 +449,7 @@ export default function App() {
         setAdminError(error.message);
       }
     } else {
-      setQueues(queues.map(q => q.queue_id === currentQueue.queue_id ? {
-        ...q,
-        queue_title: editTitle,
-        queue_subtitle: editSubtitle,
-        slug: cleanSlug
-      } : q));
+      setQueue({ ...queue, queue_title: editTitle, queue_subtitle: editSubtitle, slug: cleanSlug });
       setIsEditing(false);
     }
   }
@@ -602,7 +501,7 @@ export default function App() {
   }
 
   const isBlocked = accountStatus === 'Block' || remainingTokens <= 0;
-  const currentPublicLink = currentQueue?.slug ? `${window.location.origin}/${currentQueue.slug}` : '';
+  const currentPublicLink = queue?.slug ? `${window.location.origin}/${queue.slug}` : '';
 
   // ══════════════════════════════════════════════════════════
   // VIEW 1: PUBLIC / TV DISPLAY
@@ -1246,7 +1145,7 @@ export default function App() {
   }
 
   // ══════════════════════════════════════════════════════════
-  // VIEW 5: ADMIN CONTROLLER DASHBOARD (MULTI-QUEUE)
+  // VIEW 5: ADMIN CONTROLLER DASHBOARD (SINGLE DESK)
   // ══════════════════════════════════════════════════════════
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', padding: '0 20px 60px' }}>
@@ -1297,7 +1196,7 @@ export default function App() {
         }}>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: '#222222' }}>Remaining Balance</div>
-            <div style={{ fontSize: 12, color: '#717171' }}>Shared across all your desks</div>
+            <div style={{ fontSize: 12, color: '#717171' }}>Available calls for your desk</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{
@@ -1336,83 +1235,14 @@ export default function App() {
           </div>
         </div>
 
-        {/* MULTI-QUEUE SELECTOR BAR */}
-        <div style={{
-          backgroundColor: '#ffffff',
-          borderRadius: 20,
-          padding: '14px 18px',
-          border: '1px solid #ebebeb',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.04)',
-          marginBottom: 16,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10
-        }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', marginBottom: 4 }}>
-              Active Desk / Counter ({queues.length})
-            </div>
-            <select
-              value={selectedQueueId || ''}
-              onChange={e => {
-                setSelectedQueueId(Number(e.target.value));
-                setIsEditing(false);
-              }}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: 10,
-                border: '1px solid #cbd5e1',
-                fontSize: 14,
-                fontWeight: 700,
-                color: '#222222',
-                backgroundColor: '#f8fafc',
-                cursor: 'pointer'
-              }}
-            >
-              {queues.map(q => (
-                <option key={q.queue_id} value={q.queue_id}>
-                  {q.queue_title} {q.queue_subtitle ? `(${q.queue_subtitle})` : ''} - /{q.slug}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <button
-            onClick={() => setIsCreateOpen(true)}
-            style={{
-              height: 38,
-              alignSelf: 'flex-end',
-              padding: '0 14px',
-              backgroundColor: '#222222',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: 10,
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              whiteSpace: 'nowrap'
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            Add Desk
-          </button>
-        </div>
-
         {adminError && (
           <div style={{ backgroundColor: '#fff8f6', color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 14, fontSize: 13, marginBottom: 16 }}>
             {adminError}
           </div>
         )}
 
-        {/* Counter Action Card for Selected Queue */}
-        {currentQueue && (
+        {/* Counter Action Card */}
+        {queue && (
           <div style={{
             backgroundColor: '#ffffff',
             borderRadius: 24,
@@ -1457,7 +1287,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                <div style={{ display: 'flex', gap: 8 }}>
                   <button
                     type="submit"
                     style={{ flex: 1, padding: 11, background: '#222222', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer' }}
@@ -1472,24 +1302,14 @@ export default function App() {
                     Cancel
                   </button>
                 </div>
-
-                {queues.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteQueue(currentQueue.queue_id)}
-                    style={{ width: '100%', padding: 9, background: 'transparent', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                  >
-                    Delete this desk
-                  </button>
-                )}
               </form>
             ) : (
               <div style={{ marginBottom: 20 }}>
                 <h2 style={{ fontSize: 24, fontWeight: 800, margin: '0 0 4px', letterSpacing: '-0.02em', color: '#222222' }}>
-                  {currentQueue.queue_title}
+                  {queue.queue_title}
                 </h2>
                 <div style={{ color: '#717171', fontSize: 14, marginBottom: 8 }}>
-                  {currentQueue.queue_subtitle}
+                  {queue.queue_subtitle}
                 </div>
                 <button
                   onClick={() => setIsEditing(true)}
@@ -1506,25 +1326,25 @@ export default function App() {
                 Current Token
               </span>
               <div style={{ fontSize: '5.5rem', fontWeight: 900, lineHeight: 1.1, margin: '8px 0 0', color: '#222222', letterSpacing: '-0.03em' }}>
-                {currentQueue.queue_position === 0 ? '—' : currentQueue.queue_position}
+                {queue.queue_position === 0 ? '—' : queue.queue_position}
               </div>
             </div>
 
-            {/* Actions */}
+            {/* Calling Actions */}
             <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
               <button
                 onClick={previousQueue}
-                disabled={!currentQueue || currentQueue.queue_position <= 0}
+                disabled={!queue || queue.queue_position <= 0}
                 style={{
                   flex: 1,
                   padding: 16,
                   fontSize: 15,
                   fontWeight: 600,
-                  backgroundColor: !currentQueue || currentQueue.queue_position <= 0 ? '#f7f7f7' : '#ffffff',
-                  color: !currentQueue || currentQueue.queue_position <= 0 ? '#c7c7c7' : '#222222',
+                  backgroundColor: !queue || queue.queue_position <= 0 ? '#f7f7f7' : '#ffffff',
+                  color: !queue || queue.queue_position <= 0 ? '#c7c7c7' : '#222222',
                   border: '1px solid #dddddd',
                   borderRadius: 14,
-                  cursor: !currentQueue || currentQueue.queue_position <= 0 ? 'not-allowed' : 'pointer'
+                  cursor: !queue || queue.queue_position <= 0 ? 'not-allowed' : 'pointer'
                 }}
               >
                 -1 Previous
@@ -1560,7 +1380,7 @@ export default function App() {
         )}
 
         {/* Public Display Card */}
-        {currentQueue && (
+        {queue && (
           <div style={{
             backgroundColor: '#ffffff',
             borderRadius: 24,
@@ -1604,108 +1424,6 @@ export default function App() {
           </div>
         )}
       </div>
-
-      {/* CREATE NEW QUEUE MODAL */}
-      {isCreateOpen && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.45)',
-          backdropFilter: 'blur(4px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 20,
-          zIndex: 1000
-        }}>
-          <div style={{
-            backgroundColor: '#ffffff',
-            borderRadius: 24,
-            padding: 28,
-            maxWidth: 440,
-            width: '100%',
-            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.2)',
-            border: '1px solid #ebebeb'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <div>
-                <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0, color: '#222222' }}>Create New Desk</h3>
-                <p style={{ fontSize: 13, color: '#717171', margin: '4px 0 0' }}>Add another counter under your account</p>
-              </div>
-              <button
-                onClick={() => setIsCreateOpen(false)}
-                style={{ background: 'none', border: 'none', fontSize: 20, color: '#999999', cursor: 'pointer', padding: 4 }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateNewQueue}>
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: '#717171', display: 'block', marginBottom: 4 }}>
-                  Counter / Doctor Name <span style={{ color: '#FF385C' }}>*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Dr. Adam or Room 2"
-                  value={newTitle}
-                  onChange={e => setNewTitle(e.target.value)}
-                  style={{ width: '100%', padding: '11px 14px', boxSizing: 'border-box', border: '1px solid #b0b0b0', borderRadius: 12, fontSize: 14 }}
-                />
-              </div>
-
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: '#717171', display: 'block', marginBottom: 4 }}>
-                  Subtitle / Specialty
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Pediatrics or Floor 1"
-                  value={newSubtitle}
-                  onChange={e => setNewSubtitle(e.target.value)}
-                  style={{ width: '100%', padding: '11px 14px', boxSizing: 'border-box', border: '1px solid #b0b0b0', borderRadius: 12, fontSize: 14 }}
-                />
-              </div>
-
-              <div style={{ marginBottom: 24 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: '#717171', display: 'block', marginBottom: 4 }}>
-                  Custom Public Slug <span style={{ color: '#FF385C' }}>*</span>
-                </label>
-                <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #b0b0b0', borderRadius: 12, padding: '0 12px' }}>
-                  <span style={{ color: '#717171', fontSize: 14 }}>livequeue.co.in/</span>
-                  <input
-                    type="text"
-                    required
-                    placeholder="room-2"
-                    value={newSlug}
-                    onChange={e => setNewSlug(e.target.value)}
-                    style={{ flex: 1, border: 'none', outline: 'none', padding: '11px 6px', fontSize: 14 }}
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={createLoading}
-                style={{
-                  width: '100%',
-                  padding: 14,
-                  background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 12,
-                  fontWeight: 700,
-                  fontSize: 15,
-                  cursor: 'pointer'
-                }}
-              >
-                {createLoading ? 'Creating...' : 'Create Desk Counter'}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* RECHARGE MODAL */}
       {isRechargeOpen && (

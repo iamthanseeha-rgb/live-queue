@@ -504,27 +504,28 @@ export default function App() {
   const currentPublicLink = queue?.slug ? `${window.location.origin}/${queue.slug}` : '';
 
   // ══════════════════════════════════════════════════════════
-  // VIEW 1: PUBLIC / TV DISPLAY
+  // VIEW 1: PUBLIC / TV / MOBILE DISPLAY (Airbnb Theme)
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'status') {
     return (
       <div 
         onClick={playAlertSound}
         style={{
-          minHeight: '100vh',
-          backgroundColor: '#0c0f14',
-          backgroundImage: 'radial-gradient(ellipse 80% 60% at 50% -20%, rgba(255, 56, 92, 0.15), rgba(255, 255, 255, 0))',
+          minHeight: '100dvh',
+          backgroundColor: '#f7f7f7',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-          color: '#ffffff',
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif',
+          color: '#222222',
           textAlign: 'center',
-          padding: 32,
-          position: 'relative'
+          padding: '76px 20px 32px',
+          position: 'relative',
+          boxSizing: 'border-box'
         }}
       >
+        {/* Top Floating Pill Button */}
         <button
           onClick={() => {
             window.history.replaceState({}, '', '/');
@@ -532,82 +533,133 @@ export default function App() {
           }}
           style={{
             position: 'absolute',
-            top: 28,
-            left: 28,
-            background: 'rgba(255, 255, 255, 0.08)',
-            backdropFilter: 'blur(12px)',
-            color: '#f1f5f9',
-            border: '1px solid rgba(255, 255, 255, 0.12)',
-            padding: '10px 20px',
+            top: 20,
+            left: 20,
+            background: '#ffffff',
+            color: '#222222',
+            border: '1px solid #dddddd',
+            padding: '8px 16px',
             borderRadius: 999,
             cursor: 'pointer',
-            fontSize: 14,
-            fontWeight: 500
+            fontSize: 13,
+            fontWeight: 600,
+            boxShadow: '0 2px 6px rgba(0,0,0,0.05)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            zIndex: 10
           }}
         >
-          {session ? '← Back to Controller' : '← Find Another Desk'}
+          {session ? '← Back to Controller' : '← Search Desk'}
         </button>
 
         {activeQueue ? (
-          <div style={{ maxWidth: 840, width: '100%' }}>
+          <div style={{ maxWidth: 520, width: '100%', margin: '0 auto' }}>
+            
+            {/* Status Pill Tag */}
             <div style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: 8,
-              padding: '6px 16px',
+              padding: '6px 14px',
               borderRadius: 999,
-              background: 'rgba(255, 56, 92, 0.12)',
-              border: '1px solid rgba(255, 56, 92, 0.25)',
-              color: '#FF385C',
-              fontSize: 13,
+              background: '#ffffff',
+              border: '1px solid #ebebeb',
+              color: '#222222',
+              fontSize: 11,
               fontWeight: 700,
-              letterSpacing: 1.5,
+              letterSpacing: 1,
               textTransform: 'uppercase',
-              marginBottom: 20
+              marginBottom: 16,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
             }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#FF385C', display: 'inline-block', boxShadow: '0 0 10px #FF385C' }} />
+              <span style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                backgroundColor: '#FF385C',
+                display: 'inline-block',
+                boxShadow: '0 0 0 3px rgba(255, 56, 92, 0.2)'
+              }} />
               Live Calling
             </div>
 
-            <h1 style={{ fontSize: 'clamp(2.5rem, 5vw, 4rem)', fontWeight: 800, margin: '0 0 8px', letterSpacing: '-0.02em', lineHeight: 1.2, color: '#ffffff' }}>
+            {/* Header Titles */}
+            <h1 style={{
+              fontSize: 'clamp(1.8rem, 6vw, 3rem)',
+              fontWeight: 800,
+              margin: '0 0 6px',
+              letterSpacing: '-0.02em',
+              color: '#222222',
+              lineHeight: 1.2
+            }}>
               {activeQueue.queue_title}
             </h1>
-            <p style={{ fontSize: '1.25rem', color: '#cbd5e1', margin: '0 0 48px', fontWeight: 500 }}>
+            <p style={{
+              fontSize: 'clamp(1rem, 3.5vw, 1.2rem)',
+              color: '#717171',
+              margin: '0 0 28px',
+              fontWeight: 400
+            }}>
               {activeQueue.queue_subtitle}
             </p>
 
+            {/* Core Card */}
             <div style={{
-              background: 'rgba(255, 255, 255, 0.03)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-              borderRadius: 36,
-              padding: '48px 24px',
-              boxShadow: '0 20px 50px rgba(0,0,0,0.4)',
-              backdropFilter: 'blur(20px)'
+              background: '#ffffff',
+              border: '1px solid #ebebeb',
+              borderRadius: 28,
+              padding: 'clamp(28px, 6vw, 44px) 20px',
+              boxShadow: '0 12px 36px rgba(0, 0, 0, 0.06)',
+              margin: '0 auto'
             }}>
-              <span style={{ fontSize: 16, letterSpacing: 4, textTransform: 'uppercase', color: '#cbd5e1', fontWeight: 600 }}>
+              <span style={{
+                fontSize: 12,
+                letterSpacing: 2.5,
+                textTransform: 'uppercase',
+                color: '#717171',
+                fontWeight: 700,
+                display: 'block'
+              }}>
                 Now Serving
               </span>
+              
               <div style={{
-                fontSize: 'clamp(8rem, 22vw, 15rem)',
-                fontWeight: 900,
-                lineHeight: 1.1,
-                margin: '16px 0',
-                letterSpacing: '-0.03em',
-                background: 'linear-gradient(180deg, #ffffff 60%, #94a3b8 100%)',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent'
+                fontSize: 'clamp(6.5rem, 28vw, 13rem)',
+                fontWeight: 800,
+                lineHeight: 1.05,
+                margin: '8px 0 0',
+                letterSpacing: '-0.04em',
+                color: '#222222'
               }}>
                 {activeQueue.queue_position === 0 ? '—' : activeQueue.queue_position}
               </div>
             </div>
 
-            <p style={{ color: '#64748b', marginTop: 32, fontSize: 13, fontWeight: 500 }}>
-              Click anywhere to enable audio chime alerts • Synced in real-time
+            {/* Footer Prompt */}
+            <p style={{
+              color: '#94a3b8',
+              marginTop: 24,
+              fontSize: 12,
+              fontWeight: 500,
+              lineHeight: 1.4,
+              padding: '0 10px'
+            }}>
+              Tap anywhere once for sound chimes • Syncs in real-time
             </p>
+
           </div>
         ) : (
-          <div style={{ maxWidth: 400, textAlign: 'center' }}>
-            <p style={{ color: '#FF385C', fontSize: 18, fontWeight: 600, marginBottom: 20 }}>
+          <div style={{
+            maxWidth: 380,
+            width: '100%',
+            background: '#ffffff',
+            padding: '32px 24px',
+            borderRadius: 24,
+            border: '1px solid #ebebeb',
+            boxShadow: '0 12px 36px rgba(0,0,0,0.06)'
+          }}>
+            <p style={{ color: '#c13515', fontSize: 15, fontWeight: 600, margin: '0 0 16px' }}>
               {lookupError || 'Loading live display...'}
             </p>
             {lookupError && (
@@ -617,17 +669,18 @@ export default function App() {
                   setCurrentPage('home');
                 }}
                 style={{
-                  background: '#FF385C',
-                  color: '#fff',
+                  background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                  color: '#ffffff',
                   border: 'none',
-                  padding: '12px 28px',
+                  padding: '12px 24px',
                   borderRadius: 999,
-                  fontSize: 15,
-                  fontWeight: 600,
-                  cursor: 'pointer'
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  width: '100%'
                 }}
               >
-                Go Back to Search
+                Back to Search
               </button>
             )}
           </div>
@@ -642,7 +695,7 @@ export default function App() {
   if (currentPage === 'home') {
     return (
       <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', display: 'flex', flexDirection: 'column' }}>
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 40px', borderBottom: '1px solid #ebebeb' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: '1px solid #ebebeb' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => setCurrentPage('home')}>
             <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -661,9 +714,9 @@ export default function App() {
             {session ? (
               <button
                 onClick={() => setCurrentPage('admin_dash')}
-                style={{ background: '#222222', color: '#ffffff', border: 'none', padding: '11px 22px', borderRadius: 999, fontWeight: 600, fontSize: 14, cursor: 'pointer' }}
+                style={{ background: '#222222', color: '#ffffff', border: 'none', padding: '10px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
               >
-                Open Dashboard
+                Dashboard
               </button>
             ) : (
               <button
@@ -671,20 +724,20 @@ export default function App() {
                   switchAuthMode('login');
                   setCurrentPage('admin_login');
                 }}
-                style={{ background: 'transparent', color: '#222222', border: '1px solid #dddddd', padding: '10px 20px', borderRadius: 999, fontWeight: 600, fontSize: 14, cursor: 'pointer' }}
+                style={{ background: 'transparent', color: '#222222', border: '1px solid #dddddd', padding: '9px 16px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
               >
-                Host / Admin Login
+                Host Login
               </button>
             )}
           </div>
         </header>
 
-        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 24px 80px' }}>
-          <div style={{ textAlign: 'center', maxWidth: 680, marginBottom: 44 }}>
-            <h1 style={{ fontSize: 'clamp(2.4rem, 4.5vw, 3.6rem)', fontWeight: 800, margin: '0 0 16px', letterSpacing: '-0.02em', lineHeight: 1.15, color: '#222222' }}>
+        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 20px 80px' }}>
+          <div style={{ textAlign: 'center', maxWidth: 680, marginBottom: 36 }}>
+            <h1 style={{ fontSize: 'clamp(2.1rem, 5vw, 3.6rem)', fontWeight: 800, margin: '0 0 14px', letterSpacing: '-0.02em', lineHeight: 1.15, color: '#222222' }}>
               Track any queue,<br />live in real-time.
             </h1>
-            <p style={{ fontSize: 17, color: '#717171', margin: 0, fontWeight: 400, lineHeight: 1.5 }}>
+            <p style={{ fontSize: 16, color: '#717171', margin: 0, fontWeight: 400, lineHeight: 1.5 }}>
               Enter the custom counter link provided by your clinic, desk, or business.
             </p>
           </div>
@@ -698,7 +751,7 @@ export default function App() {
                 backgroundColor: '#ffffff',
                 border: '1px solid #dddddd',
                 borderRadius: 999,
-                padding: '6px 6px 6px 24px',
+                padding: '6px 6px 6px 20px',
                 boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
                 boxSizing: 'border-box'
               }}
@@ -711,7 +764,7 @@ export default function App() {
                   placeholder="dr-adam or room-1"
                   value={inputQuery}
                   onChange={e => setInputQuery(e.target.value)}
-                  style={{ border: 'none', outline: 'none', fontSize: 16, color: '#222222', background: 'transparent', fontWeight: 500, width: '100%', padding: 0 }}
+                  style={{ border: 'none', outline: 'none', fontSize: 16, color: '#222222', background: '#ffffff', fontWeight: 500, width: '100%', padding: 0 }}
                 />
               </div>
 
@@ -722,12 +775,12 @@ export default function App() {
                   color: '#ffffff',
                   border: 'none',
                   borderRadius: 999,
-                  height: 48,
-                  padding: '0 24px',
+                  height: 46,
+                  padding: '0 20px',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 8,
-                  fontSize: 15,
+                  fontSize: 14,
                   fontWeight: 600,
                   cursor: 'pointer',
                   flexShrink: 0,
@@ -758,8 +811,8 @@ export default function App() {
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'reset_password') {
     return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', padding: 24 }}>
-        <div style={{ maxWidth: 420, width: '100%', backgroundColor: '#ffffff', borderRadius: 24, padding: 32, boxShadow: '0 12px 36px rgba(0,0,0,0.08)', border: '1px solid #ebebeb' }}>
+      <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', padding: 20 }}>
+        <div style={{ maxWidth: 420, width: '100%', backgroundColor: '#ffffff', borderRadius: 24, padding: 28, boxShadow: '0 12px 36px rgba(0,0,0,0.08)', border: '1px solid #ebebeb' }}>
           <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Set New Password</h2>
           <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px' }}>Enter your new password to regain access to your desk.</p>
 
@@ -778,7 +831,7 @@ export default function App() {
                 placeholder="At least 6 characters"
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
-                style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
               />
             </div>
 
@@ -810,9 +863,9 @@ export default function App() {
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'admin_login' && !session) {
     return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', padding: 24 }}>
+      <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', padding: 16 }}>
         <div style={{ maxWidth: 420, width: '100%', backgroundColor: '#ffffff', borderRadius: 24, boxShadow: '0 12px 36px rgba(0,0,0,0.08)', border: '1px solid #ebebeb', overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'center', padding: '18px 24px', borderBottom: '1px solid #ebebeb' }}>
+          <div style={{ display: 'flex', alignItems: 'center', padding: '18px 20px', borderBottom: '1px solid #ebebeb' }}>
             <button
               onClick={() => {
                 switchAuthMode('login');
@@ -830,9 +883,9 @@ export default function App() {
             </div>
           </div>
 
-          <div style={{ padding: '28px 24px' }}>
+          <div style={{ padding: '24px 20px' }}>
             {authMode !== 'forgot' && signupStep !== 'link_sent' && (
-              <div style={{ display: 'flex', backgroundColor: '#f1f5f9', borderRadius: 12, padding: 4, marginBottom: 24 }}>
+              <div style={{ display: 'flex', backgroundColor: '#f1f5f9', borderRadius: 12, padding: 4, marginBottom: 20 }}>
                 <button
                   type="button"
                   onClick={() => switchAuthMode('login')}
@@ -871,21 +924,21 @@ export default function App() {
             )}
 
             {authError && (
-              <div style={{ backgroundColor: '#fff8f6', color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 20 }}>
+              <div style={{ backgroundColor: '#fff8f6', color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 18 }}>
                 {authError}
               </div>
             )}
 
             {authSuccess && (
-              <div style={{ backgroundColor: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 20 }}>
+              <div style={{ backgroundColor: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 18 }}>
                 {authSuccess}
               </div>
             )}
 
             {authMode === 'login' && (
               <div>
-                <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Welcome Host</h2>
-                <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px' }}>Sign in using your registered email and password.</p>
+                <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Welcome Host</h2>
+                <p style={{ color: '#717171', fontSize: 13, margin: '0 0 18px' }}>Sign in using your registered email and password.</p>
 
                 <form onSubmit={handleLogin}>
                   <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
@@ -896,7 +949,7 @@ export default function App() {
                       placeholder="name@example.com"
                       value={email}
                       onChange={e => setEmail(e.target.value)}
-                      style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                      style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
                     />
                   </div>
 
@@ -908,11 +961,11 @@ export default function App() {
                       placeholder="••••••••"
                       value={password}
                       onChange={e => setPassword(e.target.value)}
-                      style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                      style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
                     />
                   </div>
 
-                  <div style={{ textAlign: 'right', marginBottom: 20 }}>
+                  <div style={{ textAlign: 'right', marginBottom: 18 }}>
                     <button
                       type="button"
                       onClick={() => switchAuthMode('forgot')}
@@ -941,7 +994,7 @@ export default function App() {
                   </button>
                 </form>
 
-                <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#717171' }}>
+                <div style={{ textAlign: 'center', marginTop: 18, fontSize: 13, color: '#717171' }}>
                   Don't have an account?{' '}
                   <button
                     type="button"
@@ -958,8 +1011,8 @@ export default function App() {
               <div>
                 {signupStep === 'form' ? (
                   <div>
-                    <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Create Your Desk</h2>
-                    <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px' }}>Register your host account with email and password.</p>
+                    <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Create Your Desk</h2>
+                    <p style={{ color: '#717171', fontSize: 13, margin: '0 0 18px' }}>Register your host account with email and password.</p>
 
                     <form onSubmit={handleSignUp}>
                       <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
@@ -972,7 +1025,7 @@ export default function App() {
                           placeholder="Dr. Adam or Clinic Host"
                           value={fullName}
                           onChange={e => setFullName(e.target.value)}
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
                         />
                       </div>
 
@@ -986,7 +1039,7 @@ export default function App() {
                           placeholder="name@example.com"
                           value={email}
                           onChange={e => setEmail(e.target.value)}
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
                         />
                       </div>
 
@@ -1000,11 +1053,11 @@ export default function App() {
                           placeholder="At least 6 characters"
                           value={password}
                           onChange={e => setPassword(e.target.value)}
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
                         />
                       </div>
 
-                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
+                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 18 }}>
                         <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
                           Confirm Password <span style={{ color: '#FF385C' }}>*</span>
                         </label>
@@ -1014,7 +1067,7 @@ export default function App() {
                           placeholder="Repeat password"
                           value={confirmPassword}
                           onChange={e => setConfirmPassword(e.target.value)}
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
                         />
                       </div>
 
@@ -1037,7 +1090,7 @@ export default function App() {
                       </button>
                     </form>
 
-                    <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#717171' }}>
+                    <div style={{ textAlign: 'center', marginTop: 18, fontSize: 13, color: '#717171' }}>
                       Already have an account?{' '}
                       <button
                         type="button"
@@ -1050,24 +1103,24 @@ export default function App() {
                   </div>
                 ) : (
                   <div style={{ textAlign: 'center', padding: '8px 0' }}>
-                    <div style={{ width: 60, height: 60, borderRadius: '50%', backgroundColor: '#ffeef1', color: '#FF385C', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-                      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <div style={{ width: 56, height: 56, borderRadius: '50%', backgroundColor: '#ffeef1', color: '#FF385C', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                         <rect x="2" y="4" width="20" height="16" rx="2"></rect>
                         <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
                       </svg>
                     </div>
-                    <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>Verification Link Sent</h2>
-                    <p style={{ color: '#717171', fontSize: 14, margin: '0 0 20px', lineHeight: 1.5 }}>
+                    <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>Verification Link Sent</h2>
+                    <p style={{ color: '#717171', fontSize: 13, margin: '0 0 18px', lineHeight: 1.5 }}>
                       We sent an activation link to:<br />
                       <strong style={{ color: '#222222' }}>{email}</strong>
                     </p>
-                    <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 14, padding: 16, fontSize: 13, color: '#475569', lineHeight: 1.5, textAlign: 'left', marginBottom: 24 }}>
+                    <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 14, padding: 14, fontSize: 13, color: '#475569', lineHeight: 1.5, textAlign: 'left', marginBottom: 20 }}>
                       💡 <strong>Next step:</strong> Click the confirmation link in your inbox. Once confirmed, return here and sign in with your email and password.
                     </div>
                     <button
                       type="button"
                       onClick={() => switchAuthMode('login')}
-                      style={{ width: '100%', padding: 14, background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: 'pointer', marginBottom: 14 }}
+                      style={{ width: '100%', padding: 13, background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: 'pointer', marginBottom: 12 }}
                     >
                       Go to Sign In
                     </button>
@@ -1088,11 +1141,11 @@ export default function App() {
               <div>
                 {!forgotSubmitted ? (
                   <div>
-                    <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Reset Password</h2>
-                    <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px' }}>Enter your email to receive a password reset link.</p>
+                    <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Reset Password</h2>
+                    <p style={{ color: '#717171', fontSize: 13, margin: '0 0 18px' }}>Enter your email to receive a password reset link.</p>
 
                     <form onSubmit={handleForgotPassword}>
-                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
+                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 18 }}>
                         <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Registered Email</label>
                         <input
                           type="email"
@@ -1100,7 +1153,7 @@ export default function App() {
                           placeholder="name@example.com"
                           value={email}
                           onChange={e => setEmail(e.target.value)}
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', padding: 0 }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
                         />
                       </div>
 
@@ -1115,19 +1168,19 @@ export default function App() {
                   </div>
                 ) : (
                   <div style={{ textAlign: 'center', padding: '10px 0' }}>
-                    <div style={{ width: 56, height: 56, borderRadius: '50%', backgroundColor: '#f0fdf4', color: '#166534', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-                      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <div style={{ width: 52, height: 52, borderRadius: '50%', backgroundColor: '#f0fdf4', color: '#166534', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="20 6 9 17 4 12"></polyline>
                       </svg>
                     </div>
                     <h2 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>Reset Link Sent</h2>
-                    <p style={{ color: '#717171', fontSize: 13, lineHeight: 1.5, margin: '0 0 20px' }}>
+                    <p style={{ color: '#717171', fontSize: 13, lineHeight: 1.5, margin: '0 0 18px' }}>
                       We sent a reset link to <strong>{email}</strong>.
                     </p>
                   </div>
                 )}
 
-                <div style={{ textAlign: 'center', marginTop: 12 }}>
+                <div style={{ textAlign: 'center', marginTop: 10 }}>
                   <button
                     type="button"
                     onClick={() => switchAuthMode('login')}
@@ -1145,10 +1198,10 @@ export default function App() {
   }
 
   // ══════════════════════════════════════════════════════════
-  // VIEW 5: ADMIN CONTROLLER DASHBOARD (SINGLE DESK)
+  // VIEW 5: ADMIN CONTROLLER DASHBOARD
   // ══════════════════════════════════════════════════════════
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', padding: '0 20px 60px' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', padding: '0 16px 60px' }}>
       
       {/* Host Bar */}
       <header style={{ maxWidth: 520, margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 72, borderBottom: '1px solid #ebebeb' }}>
@@ -1163,7 +1216,7 @@ export default function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button
             onClick={() => setCurrentPage('home')}
-            style={{ background: '#ffffff', border: '1px solid #dddddd', padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+            style={{ background: '#ffffff', border: '1px solid #dddddd', padding: '7px 13px', borderRadius: 999, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
           >
             Home
           </button>
@@ -1173,20 +1226,20 @@ export default function App() {
               switchAuthMode('login');
               setCurrentPage('home');
             }}
-            style={{ background: 'transparent', border: 'none', color: '#717171', padding: '8px 10px', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}
+            style={{ background: 'transparent', border: 'none', color: '#717171', padding: '7px 8px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
           >
             Log out
           </button>
         </div>
       </header>
 
-      <div style={{ maxWidth: 480, margin: '24px auto 0' }}>
+      <div style={{ maxWidth: 480, margin: '20px auto 0' }}>
         
         {/* Token Balance Widget */}
         <div style={{
           backgroundColor: '#ffffff',
           borderRadius: 20,
-          padding: '18px 24px',
+          padding: '16px 20px',
           border: '1px solid #ebebeb',
           boxShadow: '0 4px 16px rgba(0,0,0,0.04)',
           display: 'flex',
@@ -1197,13 +1250,13 @@ export default function App() {
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: '#222222' }}>Remaining Balance</div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{
-              fontSize: 20,
+              fontSize: 18,
               fontWeight: 800,
               color: remainingTokens <= 100 ? '#c13515' : '#008a05',
               backgroundColor: remainingTokens <= 100 ? '#fff8f6' : '#f0fdf4',
-              padding: '6px 14px',
+              padding: '6px 12px',
               borderRadius: 999
             }}>
               {remainingTokens}
@@ -1245,7 +1298,7 @@ export default function App() {
           <div style={{
             backgroundColor: '#ffffff',
             borderRadius: 24,
-            padding: 32,
+            padding: '28px 20px',
             border: '1px solid #ebebeb',
             boxShadow: '0 8px 24px rgba(0,0,0,0.06)',
             textAlign: 'center',
@@ -1259,7 +1312,7 @@ export default function App() {
                     type="text"
                     value={editTitle}
                     onChange={e => setEditTitle(e.target.value)}
-                    style={{ width: '100%', padding: '10px 12px', boxSizing: 'border-box', border: '1px solid #b0b0b0', borderRadius: 10, fontSize: 14 }}
+                    style={{ width: '100%', padding: '10px 12px', boxSizing: 'border-box', border: '1px solid #b0b0b0', borderRadius: 10, fontSize: 14, background: '#ffffff', color: '#222222' }}
                   />
                 </div>
 
@@ -1269,7 +1322,7 @@ export default function App() {
                     type="text"
                     value={editSubtitle}
                     onChange={e => setEditSubtitle(e.target.value)}
-                    style={{ width: '100%', padding: '10px 12px', boxSizing: 'border-box', border: '1px solid #b0b0b0', borderRadius: 10, fontSize: 14 }}
+                    style={{ width: '100%', padding: '10px 12px', boxSizing: 'border-box', border: '1px solid #b0b0b0', borderRadius: 10, fontSize: 14, background: '#ffffff', color: '#222222' }}
                   />
                 </div>
 
@@ -1281,7 +1334,7 @@ export default function App() {
                       type="text"
                       value={editSlug}
                       onChange={e => setEditSlug(e.target.value)}
-                      style={{ flex: 1, border: 'none', outline: 'none', padding: '10px 6px', fontSize: 14 }}
+                      style={{ flex: 1, border: 'none', outline: 'none', padding: '10px 6px', fontSize: 14, background: '#ffffff', color: '#222222' }}
                     />
                   </div>
                 </div>
@@ -1303,7 +1356,7 @@ export default function App() {
                 </div>
               </form>
             ) : (
-              <div style={{ marginBottom: 20 }}>
+              <div style={{ marginBottom: 18 }}>
                 <h2 style={{ fontSize: 24, fontWeight: 800, margin: '0 0 4px', letterSpacing: '-0.02em', color: '#222222' }}>
                   {queue.queue_title}
                 </h2>
@@ -1320,23 +1373,23 @@ export default function App() {
             )}
 
             {/* Token Big Number Display */}
-            <div style={{ padding: '24px 0', borderTop: '1px solid #f0f0f0', borderBottom: '1px solid #f0f0f0', margin: '16px 0 24px' }}>
+            <div style={{ padding: '20px 0', borderTop: '1px solid #f0f0f0', borderBottom: '1px solid #f0f0f0', margin: '14px 0 20px' }}>
               <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, textTransform: 'uppercase', color: '#717171' }}>
                 Current Token
               </span>
-              <div style={{ fontSize: '5.5rem', fontWeight: 900, lineHeight: 1.1, margin: '8px 0 0', color: '#222222', letterSpacing: '-0.03em' }}>
+              <div style={{ fontSize: '5rem', fontWeight: 900, lineHeight: 1.1, margin: '6px 0 0', color: '#222222', letterSpacing: '-0.03em' }}>
                 {queue.queue_position === 0 ? '—' : queue.queue_position}
               </div>
             </div>
 
             {/* Calling Actions */}
-            <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
               <button
                 onClick={previousQueue}
                 disabled={!queue || queue.queue_position <= 0}
                 style={{
                   flex: 1,
-                  padding: 16,
+                  padding: 15,
                   fontSize: 15,
                   fontWeight: 600,
                   backgroundColor: !queue || queue.queue_position <= 0 ? '#f7f7f7' : '#ffffff',
@@ -1354,7 +1407,7 @@ export default function App() {
                 disabled={isBlocked}
                 style={{
                   flex: 2,
-                  padding: 16,
+                  padding: 15,
                   fontSize: 16,
                   fontWeight: 700,
                   background: isBlocked ? '#e2e8f0' : 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
@@ -1383,7 +1436,7 @@ export default function App() {
           <div style={{
             backgroundColor: '#ffffff',
             borderRadius: 24,
-            padding: 24,
+            padding: '24px 20px',
             border: '1px solid #ebebeb',
             boxShadow: '0 4px 16px rgba(0,0,0,0.04)',
             textAlign: 'center'
@@ -1391,14 +1444,14 @@ export default function App() {
             <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: '#717171' }}>
               Public Display Link
             </span>
-            <div style={{ margin: '6px 0 16px', fontSize: 16, fontWeight: 700 }}>
+            <div style={{ margin: '6px 0 16px', fontSize: 15, fontWeight: 700 }}>
               <a href={currentPublicLink} target="_blank" rel="noreferrer" style={{ color: '#FF385C', textDecoration: 'none' }}>
                 {currentPublicLink.replace(/^https?:\/\//, '')}
               </a>
             </div>
 
-            <div style={{ display: 'inline-block', padding: 16, backgroundColor: '#ffffff', border: '1px solid #ebebeb', borderRadius: 18, boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }}>
-              <QRCodeSVG value={currentPublicLink} size={140} fgColor="#222222" />
+            <div style={{ display: 'inline-block', padding: 14, backgroundColor: '#ffffff', border: '1px solid #ebebeb', borderRadius: 16, boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }}>
+              <QRCodeSVG value={currentPublicLink} size={130} fgColor="#222222" />
             </div>
 
             <div style={{ marginTop: 16 }}>
@@ -1434,22 +1487,22 @@ export default function App() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          padding: 20,
+          padding: 16,
           zIndex: 1000
         }}>
           <div style={{
             backgroundColor: '#ffffff',
             borderRadius: 24,
-            padding: 28,
+            padding: 24,
             maxWidth: 440,
             width: '100%',
             boxShadow: '0 20px 50px rgba(0, 0, 0, 0.2)',
             border: '1px solid #ebebeb'
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
               <div>
                 <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0, color: '#222222' }}>Recharge Quota</h3>
-                <p style={{ fontSize: 13, color: '#717171', margin: '4px 0 0' }}>Select a package to add calls to your balance</p>
+                <p style={{ fontSize: 12, color: '#717171', margin: '3px 0 0' }}>Select a package to add calls to your balance</p>
               </div>
               <button
                 onClick={() => !isProcessing && setIsRechargeOpen(false)}
@@ -1459,7 +1512,7 @@ export default function App() {
               </button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {TOKEN_PACKS.map(pack => (
                 <div
                   key={pack.id}
@@ -1468,25 +1521,17 @@ export default function App() {
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    padding: '16px 18px',
+                    padding: '14px 16px',
                     borderRadius: 16,
                     border: '1.5px solid #ebebeb',
                     backgroundColor: '#fafafa',
                     cursor: isProcessing ? 'wait' : 'pointer',
                     transition: 'all 0.15s ease'
                   }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.borderColor = '#FF385C';
-                    e.currentTarget.style.backgroundColor = '#fff8f9';
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.borderColor = '#ebebeb';
-                    e.currentTarget.style.backgroundColor = '#fafafa';
-                  }}
                 >
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 16, fontWeight: 800, color: '#222222' }}>
+                      <span style={{ fontSize: 15, fontWeight: 800, color: '#222222' }}>
                         {pack.tokens.toLocaleString()} Calls
                       </span>
                       {pack.tag && (
@@ -1507,7 +1552,7 @@ export default function App() {
                   </div>
 
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: '#222222' }}>₹{pack.price}</div>
+                    <div style={{ fontSize: 17, fontWeight: 800, color: '#222222' }}>₹{pack.price}</div>
                     <div style={{ fontSize: 11, color: '#94a3b8' }}>One-time</div>
                   </div>
                 </div>
@@ -1515,7 +1560,7 @@ export default function App() {
             </div>
 
             {isProcessing && (
-              <p style={{ textAlign: 'center', fontSize: 13, color: '#FF385C', fontWeight: 600, marginTop: 16, margin: '16px 0 0' }}>
+              <p style={{ textAlign: 'center', fontSize: 13, color: '#FF385C', fontWeight: 600, marginTop: 14, margin: '14px 0 0' }}>
                 Connecting to Razorpay gateway...
               </p>
             )}

@@ -109,3 +109,34 @@ code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+/* Force inputs to stay white with black text across all dark mode browsers & WebViews */
+:root {
+  color-scheme: light !only;
+}
+
+input,
+input:focus,
+input:active {
+  background-color: #ffffff !important;
+  color: #111111 !important;
+  caret-color: #111111 !important;
+  -webkit-text-fill-color: #111111 !important;
+}
+
+/* Fix browser dark-mode autofill turning fields black */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+  -webkit-text-fill-color: #111111 !important;
+  caret-color: #111111 !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Ensure placeholder text remains visible */
+input::placeholder {
+  color: #888888 !important;
+  -webkit-text-fill-color: #888888 !important;
+  opacity: 1 !important;
+}

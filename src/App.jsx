@@ -340,7 +340,7 @@ export default function App() {
     setAuthError('');
 
     if (newPassword.length < 6) {
-      setAuthError('Password must be at least 6 characters.');
+      setAuthError('New password must be at least 6 characters.');
       setLoading(false);
       return;
     }
@@ -504,7 +504,7 @@ export default function App() {
   const currentPublicLink = queue?.slug ? `${window.location.origin}/${queue.slug}` : '';
 
   // ══════════════════════════════════════════════════════════
-  // VIEW 1: PUBLIC / TV / MOBILE DISPLAY (Airbnb Theme)
+  // VIEW 1: PUBLIC / TV / MOBILE DISPLAY (Airbnb Colorful)
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'status') {
     return (
@@ -512,7 +512,8 @@ export default function App() {
         onClick={playAlertSound}
         style={{
           minHeight: '100dvh',
-          backgroundColor: '#f7f7f7',
+          backgroundColor: '#fffdfd',
+          backgroundImage: 'radial-gradient(circle at 50% -10%, rgba(255, 56, 92, 0.12) 0%, rgba(255, 106, 0, 0.04) 40%, rgba(255, 255, 255, 0) 75%)',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
@@ -537,13 +538,13 @@ export default function App() {
             left: 20,
             background: '#ffffff',
             color: '#222222',
-            border: '1px solid #dddddd',
+            border: '1px solid #fee2e2',
             padding: '8px 16px',
             borderRadius: 999,
             cursor: 'pointer',
             fontSize: 13,
             fontWeight: 600,
-            boxShadow: '0 2px 6px rgba(0,0,0,0.05)',
+            boxShadow: '0 4px 12px rgba(255, 56, 92, 0.08)',
             display: 'flex',
             alignItems: 'center',
             gap: 6,
@@ -556,22 +557,22 @@ export default function App() {
         {activeQueue ? (
           <div style={{ maxWidth: 520, width: '100%', margin: '0 auto' }}>
             
-            {/* Status Pill Tag */}
+            {/* Airbnb Colorful Live Calling Pill */}
             <div style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: 8,
-              padding: '6px 14px',
+              padding: '7px 16px',
               borderRadius: 999,
-              background: '#ffffff',
-              border: '1px solid #ebebeb',
-              color: '#222222',
+              background: '#fff1f2',
+              border: '1px solid #fecdd3',
+              color: '#FF385C',
               fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: 1,
+              fontWeight: 800,
+              letterSpacing: 1.2,
               textTransform: 'uppercase',
               marginBottom: 16,
-              boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+              boxShadow: '0 2px 10px rgba(255, 56, 92, 0.1)'
             }}>
               <span style={{
                 width: 8,
@@ -579,58 +580,62 @@ export default function App() {
                 borderRadius: '50%',
                 backgroundColor: '#FF385C',
                 display: 'inline-block',
-                boxShadow: '0 0 0 3px rgba(255, 56, 92, 0.2)'
+                boxShadow: '0 0 0 4px rgba(255, 56, 92, 0.25)'
               }} />
               Live Calling
             </div>
 
             {/* Header Titles */}
             <h1 style={{
-              fontSize: 'clamp(1.8rem, 6vw, 3rem)',
+              fontSize: 'clamp(1.9rem, 6vw, 3.2rem)',
               fontWeight: 800,
               margin: '0 0 6px',
-              letterSpacing: '-0.02em',
+              letterSpacing: '-0.03em',
               color: '#222222',
               lineHeight: 1.2
             }}>
               {activeQueue.queue_title}
             </h1>
             <p style={{
-              fontSize: 'clamp(1rem, 3.5vw, 1.2rem)',
-              color: '#717171',
+              fontSize: 'clamp(1rem, 3.5vw, 1.25rem)',
+              color: '#FF385C',
               margin: '0 0 28px',
-              fontWeight: 400
+              fontWeight: 600
             }}>
               {activeQueue.queue_subtitle}
             </p>
 
-            {/* Core Card */}
+            {/* Core Colorful Airbnb Card */}
             <div style={{
               background: '#ffffff',
-              border: '1px solid #ebebeb',
-              borderRadius: 28,
-              padding: 'clamp(28px, 6vw, 44px) 20px',
-              boxShadow: '0 12px 36px rgba(0, 0, 0, 0.06)',
-              margin: '0 auto'
+              border: '1.5px solid #ffe4e6',
+              borderRadius: 32,
+              padding: 'clamp(32px, 7vw, 48px) 20px',
+              boxShadow: '0 20px 48px -8px rgba(255, 56, 92, 0.12), 0 8px 24px -4px rgba(0, 0, 0, 0.04)',
+              margin: '0 auto',
+              position: 'relative'
             }}>
               <span style={{
                 fontSize: 12,
-                letterSpacing: 2.5,
+                letterSpacing: 3,
                 textTransform: 'uppercase',
-                color: '#717171',
-                fontWeight: 700,
+                color: '#94a3b8',
+                fontWeight: 800,
                 display: 'block'
               }}>
                 Now Serving
               </span>
               
+              {/* Vibrant Airbnb Gradient Number */}
               <div style={{
-                fontSize: 'clamp(6.5rem, 28vw, 13rem)',
-                fontWeight: 800,
+                fontSize: 'clamp(7rem, 30vw, 13.5rem)',
+                fontWeight: 900,
                 lineHeight: 1.05,
                 margin: '8px 0 0',
                 letterSpacing: '-0.04em',
-                color: '#222222'
+                background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 55%, #D70466 100%)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent'
               }}>
                 {activeQueue.queue_position === 0 ? '—' : activeQueue.queue_position}
               </div>
@@ -656,8 +661,8 @@ export default function App() {
             background: '#ffffff',
             padding: '32px 24px',
             borderRadius: 24,
-            border: '1px solid #ebebeb',
-            boxShadow: '0 12px 36px rgba(0,0,0,0.06)'
+            border: '1px solid #fee2e2',
+            boxShadow: '0 12px 36px rgba(255, 56, 92, 0.08)'
           }}>
             <p style={{ color: '#c13515', fontSize: 15, fontWeight: 600, margin: '0 0 16px' }}>
               {lookupError || 'Loading live display...'}
@@ -677,7 +682,8 @@ export default function App() {
                   fontSize: 14,
                   fontWeight: 700,
                   cursor: 'pointer',
-                  width: '100%'
+                  width: '100%',
+                  boxShadow: '0 4px 12px rgba(255, 56, 92, 0.3)'
                 }}
               >
                 Back to Search

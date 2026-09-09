@@ -1196,7 +1196,6 @@ export default function App() {
         }}>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: '#222222' }}>Remaining Balance</div>
-            <div style={{ fontSize: 12, color: '#717171' }}>Available calls for your desk</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{

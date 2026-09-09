@@ -500,6 +500,163 @@ export default function App() {
     rzp.open();
   }
 
+  // Print poster function for PDF generation
+  function handlePrintPoster() {
+    const svgEl = document.getElementById('poster-qr-code');
+    if (!svgEl) return;
+    const svgData = new XMLSerializer().serializeToString(svgEl);
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const qrUrl = URL.createObjectURL(svgBlob);
+
+    const win = window.open('', '_blank');
+    if (!win) {
+      alert('Please allow popups to open the printable PDF.');
+      return;
+    }
+
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>${queue.queue_title} - Printable QR Code Poster</title>
+          <style>
+            @page {
+              size: A4 portrait;
+              margin: 0;
+            }
+            * {
+              box-sizing: border-box;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+              margin: 0;
+              padding: 60px 48px;
+              background-color: #ffffff;
+              color: #222222;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justifyContent: space-between;
+              min-height: 100vh;
+              text-align: center;
+            }
+            .header-badge {
+              display: inline-block;
+              background: #fff1f2;
+              border: 2px solid #fecdd3;
+              color: #FF385C;
+              font-size: 14px;
+              font-weight: 800;
+              letter-spacing: 2px;
+              text-transform: uppercase;
+              padding: 8px 24px;
+              border-radius: 999px;
+              margin-bottom: 24px;
+            }
+            h1 {
+              font-size: 48px;
+              font-weight: 900;
+              margin: 0 0 10px;
+              letter-spacing: -1.5px;
+              line-height: 1.15;
+            }
+            .subtitle {
+              font-size: 24px;
+              color: #FF385C;
+              font-weight: 600;
+              margin: 0 0 40px;
+            }
+            .qr-box {
+              background: #ffffff;
+              border: 3px solid #f0f0f0;
+              border-radius: 36px;
+              padding: 40px;
+              box-shadow: 0 16px 40px rgba(0,0,0,0.06);
+              display: inline-block;
+              margin-bottom: 36px;
+            }
+            .qr-box img {
+              width: 320px;
+              height: 320px;
+              display: block;
+            }
+            .instruction-card {
+              max-width: 520px;
+              background: #f8fafc;
+              border: 2px solid #e2e8f0;
+              border-radius: 20px;
+              padding: 20px 28px;
+              margin: 0 auto 36px;
+            }
+            .instruction-title {
+              font-size: 18px;
+              font-weight: 800;
+              margin-bottom: 8px;
+              color: #0f172a;
+            }
+            .instruction-text {
+              font-size: 14px;
+              color: #64748b;
+              margin: 0;
+              line-height: 1.5;
+            }
+            .link-pill {
+              display: inline-block;
+              background: #ffffff;
+              border: 2px solid #cbd5e1;
+              color: #0f172a;
+              font-size: 18px;
+              font-weight: 800;
+              padding: 12px 28px;
+              border-radius: 999px;
+              margin-top: 12px;
+            }
+            .footer {
+              font-size: 13px;
+              color: #94a3b8;
+              font-weight: 600;
+              letter-spacing: 0.5px;
+            }
+          </style>
+        </head>
+        <body>
+          <div>
+            <div class="header-badge">LIVE QUEUE STATUS</div>
+            <h1>${queue.queue_title}</h1>
+            <div class="subtitle">${queue.queue_subtitle || 'Consultation Counter'}</div>
+          </div>
+
+          <div>
+            <div class="qr-box">
+              <img src="${qrUrl}" alt="Live Queue QR Code" />
+            </div>
+
+            <div class="instruction-card">
+              <div class="instruction-title">Scan to track your token on your phone</div>
+              <p class="instruction-text">
+                Point your phone camera at the QR code above or visit the link below to watch the live queue anywhere.
+              </p>
+              <div class="link-pill">${currentPublicLink.replace(/^https?:\/\//, '')}</div>
+            </div>
+          </div>
+
+          <div class="footer">
+            Powered by livequeue.co.in • Real-time queue updates
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    win.document.close();
+  }
+
   const isBlocked = accountStatus === 'Block' || remainingTokens <= 0;
   const currentPublicLink = queue?.slug ? `${window.location.origin}/${queue.slug}` : '';
 
@@ -1499,28 +1656,56 @@ export default function App() {
               </a>
             </div>
 
+            {/* Render QR code */}
             <div style={{ display: 'inline-block', padding: 14, backgroundColor: '#ffffff', border: '1px solid #ebebeb', borderRadius: 16, boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }}>
-              <QRCodeSVG value={currentPublicLink} size={130} fgColor="#222222" />
+              <QRCodeSVG id="poster-qr-code" value={currentPublicLink} size={150} fgColor="#222222" level="H" />
             </div>
 
-            <div style={{ marginTop: 16 }}>
+            {/* Action Buttons: TV Launch + Print/PDF Download */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
               <a
                 href={currentPublicLink}
                 target="_blank"
                 rel="noreferrer"
                 style={{
-                  display: 'inline-block',
+                  display: 'block',
                   background: '#222222',
                   color: '#ffffff',
-                  padding: '10px 20px',
+                  padding: '12px 20px',
                   borderRadius: 999,
                   textDecoration: 'none',
-                  fontSize: 13,
+                  fontSize: 14,
                   fontWeight: 600
                 }}
               >
                 Launch TV Display Screen ↗
               </a>
+
+              <button
+                onClick={handlePrintPoster}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  background: '#fff1f2',
+                  color: '#FF385C',
+                  border: '1.5px solid #fecdd3',
+                  padding: '11px 20px',
+                  borderRadius: 999,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 6px rgba(255, 56, 92, 0.08)'
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Download Printable Poster (PDF)
+              </button>
             </div>
           </div>
         )}

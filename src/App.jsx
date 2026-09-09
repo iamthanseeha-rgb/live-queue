@@ -1240,6 +1240,49 @@ export default function App() {
       </header>
 
       <div style={{ maxWidth: 480, margin: '20px auto 0' }}>
+
+        {/* Logged-in Host Profile Bar */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          backgroundColor: '#ffffff',
+          borderRadius: 14,
+          padding: '8px 14px',
+          border: '1px solid #ebebeb',
+          boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
+          marginBottom: 12,
+          fontSize: 11
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden' }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#10b981', flexShrink: 0 }} />
+            <span style={{ fontWeight: 700, color: '#222222', whiteSpace: 'nowrap' }}>
+              {session?.user?.user_metadata?.name || 'Host'}
+            </span>
+            <span style={{ color: '#d1d5db' }}>•</span>
+            <span style={{ color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {session?.user?.email}
+            </span>
+          </div>
+
+          <div 
+            title={`Full ID: ${session?.user?.id || ''}`}
+            style={{
+              fontSize: 10,
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+              color: '#9ca3af',
+              backgroundColor: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              padding: '2px 6px',
+              borderRadius: 6,
+              flexShrink: 0,
+              marginLeft: 8,
+              cursor: 'default'
+            }}
+          >
+            ID: {session?.user?.id ? `${session.user.id.slice(0, 8)}...` : ''}
+          </div>
+        </div>
         
         {/* Token Balance Widget */}
         <div style={{

@@ -557,32 +557,32 @@ export default function App() {
         {activeQueue ? (
           <div style={{ maxWidth: 520, width: '100%', margin: '0 auto' }}>
             
-            {/* Airbnb Colorful Live Calling Pill */}
+            {/* Dynamic Status Pill */}
             <div style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: 8,
               padding: '7px 16px',
               borderRadius: 999,
-              background: '#fff1f2',
-              border: '1px solid #fecdd3',
-              color: '#FF385C',
+              background: activeQueue.queue_position === 0 ? '#f1f5f9' : '#fff1f2',
+              border: activeQueue.queue_position === 0 ? '1px solid #e2e8f0' : '1px solid #fecdd3',
+              color: activeQueue.queue_position === 0 ? '#64748b' : '#FF385C',
               fontSize: 11,
               fontWeight: 800,
               letterSpacing: 1.2,
               textTransform: 'uppercase',
               marginBottom: 16,
-              boxShadow: '0 2px 10px rgba(255, 56, 92, 0.1)'
+              boxShadow: activeQueue.queue_position === 0 ? '0 2px 6px rgba(0,0,0,0.04)' : '0 2px 10px rgba(255, 56, 92, 0.1)'
             }}>
               <span style={{
                 width: 8,
                 height: 8,
                 borderRadius: '50%',
-                backgroundColor: '#FF385C',
+                backgroundColor: activeQueue.queue_position === 0 ? '#94a3b8' : '#FF385C',
                 display: 'inline-block',
-                boxShadow: '0 0 0 4px rgba(255, 56, 92, 0.25)'
+                boxShadow: activeQueue.queue_position === 0 ? '0 0 0 4px rgba(148, 163, 184, 0.25)' : '0 0 0 4px rgba(255, 56, 92, 0.25)'
               }} />
-              Live Calling
+              {activeQueue.queue_position === 0 ? 'Queue Not Started' : 'Live Calling'}
             </div>
 
             {/* Header Titles */}

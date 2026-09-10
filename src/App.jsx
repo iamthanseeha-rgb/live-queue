@@ -982,21 +982,24 @@ export default function App() {
 
         <footer style={{
           borderTop: '1px solid #ebebeb',
-          padding: '24px 20px',
+          padding: '24px 20px 32px',
           display: 'flex',
-          flexWrap: 'wrap',
-          justifyContent: 'space-between',
+          flexDirection: 'column',
           alignItems: 'center',
+          justifyContent: 'center',
           maxWidth: 960,
           margin: '0 auto',
           width: '100%',
           boxSizing: 'border-box',
-          gap: 16,
+          gap: 12,
           fontSize: 13,
-          color: '#717171'
+          color: '#717171',
+          textAlign: 'center'
         }}>
-          <div>© {new Date().getFullYear()} LiveQueue. All rights reserved.</div>
-          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ textAlign: 'center' }}>
+            © {new Date().getFullYear()} LiveQueue. All rights reserved.
+          </div>
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' }}>
             <button
               onClick={() => {
                 window.history.pushState({}, '', '/contact');

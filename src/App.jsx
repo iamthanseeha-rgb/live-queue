@@ -1887,16 +1887,17 @@ export default function App() {
             maxWidth: 440,
             width: '100%',
             boxShadow: '0 20px 50px rgba(0, 0, 0, 0.2)',
-            border: '1px solid #ebebeb'
+            border: '1px solid #ebebeb',
+            textAlign: 'left'
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-              <div>
-                <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0, color: '#222222' }}>Recharge Quota</h3>
-                <p style={{ fontSize: 12, color: '#717171', margin: '3px 0 0' }}>Select a package to add calls to your balance</p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>
+              <div style={{ textAlign: 'left' }}>
+                <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0, color: '#222222', textAlign: 'left' }}>Recharge Quota</h3>
+                <p style={{ fontSize: 12, color: '#717171', margin: '3px 0 0', textAlign: 'left' }}>Select a package to add calls to your balance</p>
               </div>
               <button
                 onClick={() => !isProcessing && setIsRechargeOpen(false)}
-                style={{ background: 'none', border: 'none', fontSize: 20, color: '#999999', cursor: 'pointer', padding: 4 }}
+                style={{ background: 'none', border: 'none', fontSize: 20, color: '#999999', cursor: 'pointer', padding: 4, lineHeight: 1 }}
               >
                 ✕
               </button>
@@ -1922,7 +1923,7 @@ export default function App() {
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 15, fontWeight: 800, color: '#222222' }}>
-                        {pack.tokens.toLocaleString()} Calls
+                        {pack.tokens.toLocaleString()} Calls[cite: 1]
                       </span>
                       {pack.tag && (
                         <span style={{
@@ -1953,7 +1954,7 @@ export default function App() {
 
             {isProcessing && (
               <p style={{ textAlign: 'center', fontSize: 13, color: '#FF385C', fontWeight: 600, marginTop: 14, margin: '14px 0 0' }}>
-                Connecting to Razorpay gateway...
+                Connecting to Razorpay gateway...[cite: 1]
               </p>
             )}
           </div>

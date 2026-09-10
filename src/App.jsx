@@ -11,7 +11,7 @@ const TOKEN_PACKS = [
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [currentPage, setCurrentPage] = useState('home'); // 'home' | 'admin_login' | 'status' | 'admin_dash' | 'reset_password' | 'contact'
+  const [currentPage, setCurrentPage] = useState('home'); // 'home' | 'admin_login' | 'status' | 'admin_dash' | 'reset_password' | 'contact' | 'privacy' | 'terms' | 'refunds'
   
   // Public search & status state
   const [inputQuery, setInputQuery] = useState('');
@@ -76,6 +76,9 @@ export default function App() {
   const getRouteSlug = () => {
     const path = window.location.pathname.replace(/^\/+|\/+$/g, '');
     if (path === 'contact') return 'contact';
+    if (path === 'privacy') return 'privacy';
+    if (path === 'terms') return 'terms';
+    if (path === 'refunds') return 'refunds';
     if (path && path !== '' && path !== 'index.html') {
       return decodeURIComponent(path).toLowerCase();
     }
@@ -95,8 +98,8 @@ export default function App() {
 
   useEffect(() => {
     const slug = getRouteSlug();
-    if (slug === 'contact') {
-      setCurrentPage('contact');
+    if (slug === 'contact' || slug === 'privacy' || slug === 'terms' || slug === 'refunds') {
+      setCurrentPage(slug);
     } else if (slug) {
       setCurrentPage('status');
       fetchQueueBySlug(slug);
@@ -882,15 +885,6 @@ export default function App() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button
-              onClick={() => {
-                window.history.pushState({}, '', '/contact');
-                setCurrentPage('contact');
-              }}
-              style={{ background: 'transparent', border: 'none', color: '#717171', padding: '8px 12px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
-            >
-              Contact Us
-            </button>
             {session ? (
               <button
                 onClick={async () => {
@@ -915,7 +909,7 @@ export default function App() {
           </div>
         </header>
 
-        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 20px 80px' }}>
+        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px 80px' }}>
           <div style={{ textAlign: 'center', maxWidth: 680, marginBottom: 36 }}>
             <h1 style={{ fontSize: 'clamp(2.1rem, 5vw, 3.6rem)', fontWeight: 800, margin: '0 0 14px', letterSpacing: '-0.02em', lineHeight: 1.15, color: '#222222' }}>
               Track any queue,<br />live in real-time.
@@ -985,6 +979,62 @@ export default function App() {
             )}
           </div>
         </main>
+
+        <footer style={{
+          borderTop: '1px solid #ebebeb',
+          padding: '24px 20px',
+          display: 'flex',
+          flexWrap: 'wrap',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          maxWidth: 960,
+          margin: '0 auto',
+          width: '100%',
+          boxSizing: 'border-box',
+          gap: 16,
+          fontSize: 13,
+          color: '#717171'
+        }}>
+          <div>© {new Date().getFullYear()} LiveQueue. All rights reserved.</div>
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button
+              onClick={() => {
+                window.history.pushState({}, '', '/contact');
+                setCurrentPage('contact');
+              }}
+              style={{ background: 'none', border: 'none', color: '#717171', cursor: 'pointer', padding: 0, fontSize: 13 }}
+            >
+              Contact Us
+            </button>
+            <button
+              onClick={() => {
+                window.history.pushState({}, '', '/privacy');
+                setCurrentPage('privacy');
+              }}
+              style={{ background: 'none', border: 'none', color: '#717171', cursor: 'pointer', padding: 0, fontSize: 13 }}
+            >
+              Privacy Policy
+            </button>
+            <button
+              onClick={() => {
+                window.history.pushState({}, '', '/terms');
+                setCurrentPage('terms');
+              }}
+              style={{ background: 'none', border: 'none', color: '#717171', cursor: 'pointer', padding: 0, fontSize: 13 }}
+            >
+              Terms of Service
+            </button>
+            <button
+              onClick={() => {
+                window.history.pushState({}, '', '/refunds');
+                setCurrentPage('refunds');
+              }}
+              style={{ background: 'none', border: 'none', color: '#717171', cursor: 'pointer', padding: 0, fontSize: 13 }}
+            >
+              Refund Policy
+            </button>
+          </div>
+        </footer>
       </div>
     );
   }
@@ -1107,6 +1157,176 @@ export default function App() {
               Typically replies within minutes • Monday to Sunday
             </div>
 
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // VIEW: PRIVACY POLICY (FOR META COMPLIANCE)
+  // ══════════════════════════════════════════════════════════
+  if (currentPage === 'privacy') {
+    return (
+      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', display: 'flex', flexDirection: 'column' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: '1px solid #ebebeb' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => {
+            window.history.replaceState({}, '', '/');
+            setCurrentPage('home');
+          }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <line x1="7" y1="8" x2="17" y2="8" />
+                <line x1="7" y1="12" x2="13" y2="12" />
+                <line x1="7" y1="16" x2="10" y2="16" />
+              </svg>
+            </div>
+            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: '#222222' }}>
+              live<span style={{ color: '#FF385C' }}>queue</span>
+            </span>
+          </div>
+
+          <button
+            onClick={() => {
+              window.history.replaceState({}, '', '/');
+              setCurrentPage('home');
+            }}
+            style={{ background: '#f7f7f7', color: '#222222', border: '1px solid #dddddd', padding: '9px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+          >
+            ← Back
+          </button>
+        </header>
+
+        <main style={{ flex: 1, maxWidth: 760, width: '100%', margin: '0 auto', padding: '48px 24px 80px', boxSizing: 'border-box' }}>
+          <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8, color: '#222222' }}>Privacy Policy</h1>
+          <p style={{ color: '#717171', fontSize: 13, marginBottom: 28 }}>Last Updated: September 2026</p>
+
+          <div style={{ lineHeight: 1.7, fontSize: 15, color: '#334155' }}>
+            <p>At LiveQueue (accessible via <strong>livequeue.co.in</strong>), we prioritize the privacy and security of both our host administrators and public queue viewers.</p>
+
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>1. Information We Collect</h3>
+            <p>We collect basic account credentials (such as your full name and email address) when you register as a host. For public users tracking queues, no personal identity registration is demanded or stored.</p>
+
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>2. How Information Is Used</h3>
+            <p>Your details are used strictly to maintain your desk profile, synchronize live queue token updates in real time, and deliver password-reset or security verification links.</p>
+
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>3. Payments & Data Protection</h3>
+            <p>Payment transactions for quota recharges are securely handled by Razorpay. LiveQueue does not access, process, or store sensitive credit card numbers or UPI PINs on its servers.</p>
+
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>4. Third-Party Sharing</h3>
+            <p>We do not sell, rent, or trade your personal data to any marketing third parties. Data is only communicated with essential cloud infrastructure (Supabase authentication and database storage) to deliver the service.</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // VIEW: TERMS OF SERVICE (FOR META COMPLIANCE)
+  // ══════════════════════════════════════════════════════════
+  if (currentPage === 'terms') {
+    return (
+      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', display: 'flex', flexDirection: 'column' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: '1px solid #ebebeb' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => {
+            window.history.replaceState({}, '', '/');
+            setCurrentPage('home');
+          }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <line x1="7" y1="8" x2="17" y2="8" />
+                <line x1="7" y1="12" x2="13" y2="12" />
+                <line x1="7" y1="16" x2="10" y2="16" />
+              </svg>
+            </div>
+            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: '#222222' }}>
+              live<span style={{ color: '#FF385C' }}>queue</span>
+            </span>
+          </div>
+
+          <button
+            onClick={() => {
+              window.history.replaceState({}, '', '/');
+              setCurrentPage('home');
+            }}
+            style={{ background: '#f7f7f7', color: '#222222', border: '1px solid #dddddd', padding: '9px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+          >
+            ← Back
+          </button>
+        </header>
+
+        <main style={{ flex: 1, maxWidth: 760, width: '100%', margin: '0 auto', padding: '48px 24px 80px', boxSizing: 'border-box' }}>
+          <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8, color: '#222222' }}>Terms of Service</h1>
+          <p style={{ color: '#717171', fontSize: 13, marginBottom: 28 }}>Last Updated: September 2026</p>
+
+          <div style={{ lineHeight: 1.7, fontSize: 15, color: '#334155' }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 20, marginBottom: 8 }}>1. Acceptance of Terms</h3>
+            <p>By creating an account or accessing the live queue display at livequeue.co.in, you agree to comply with and be bound by these Terms of Service.</p>
+
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>2. Service Description</h3>
+            <p>LiveQueue provides an online queue counter management service allowing clinics, businesses, and desk managers to control sequential token numbers and display them publicly in real time.</p>
+
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>3. Account & Token Usage</h3>
+            <p>Hosts receive an initial token quota upon account activation. Advancing tokens consumes quota units from the balance. Additional calls can be purchased through designated recharge packs.</p>
+
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>4. Acceptable Conduct</h3>
+            <p>Users agree not to exploit the platform for spamming, illegitimate queuing, or activities that compromise server infrastructure or public availability.</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // VIEW: REFUND & CANCELLATION (FOR META & RAZORPAY COMPLIANCE)
+  // ══════════════════════════════════════════════════════════
+  if (currentPage === 'refunds') {
+    return (
+      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', display: 'flex', flexDirection: 'column' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: '1px solid #ebebeb' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => {
+            window.history.replaceState({}, '', '/');
+            setCurrentPage('home');
+          }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <line x1="7" y1="8" x2="17" y2="8" />
+                <line x1="7" y1="12" x2="13" y2="12" />
+                <line x1="7" y1="16" x2="10" y2="16" />
+              </svg>
+            </div>
+            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: '#222222' }}>
+              live<span style={{ color: '#FF385C' }}>queue</span>
+            </span>
+          </div>
+
+          <button
+            onClick={() => {
+              window.history.replaceState({}, '', '/');
+              setCurrentPage('home');
+            }}
+            style={{ background: '#f7f7f7', color: '#222222', border: '1px solid #dddddd', padding: '9px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+          >
+            ← Back
+          </button>
+        </header>
+
+        <main style={{ flex: 1, maxWidth: 760, width: '100%', margin: '0 auto', padding: '48px 24px 80px', boxSizing: 'border-box' }}>
+          <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8, color: '#222222' }}>Cancellation & Refund Policy</h1>
+          <p style={{ color: '#717171', fontSize: 13, marginBottom: 28 }}>Last Updated: September 2026</p>
+
+          <div style={{ lineHeight: 1.7, fontSize: 15, color: '#334155' }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 20, marginBottom: 8 }}>1. Digital Services & Token Packs</h3>
+            <p>LiveQueue delivers immediate digital service access. Quota packs purchased provide instant calling credits directly to your desk controller account.</p>
+
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>2. Refund Policy</h3>
+            <p>Because calling quota units are made available immediately upon payment capture, consumed tokens are non-refundable. If an amount is debited from your payment source but quota tokens are not credited due to network or gateway technical issues, our team will investigate and either credit the pack or initiate a full refund within 5 to 7 business days.</p>
+
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>3. Contact Support</h3>
+            <p>For any billing inquiries, transaction verifications, or assistance, reach us directly via WhatsApp at <strong>+91 8921677207</strong>.</p>
           </div>
         </main>
       </div>

@@ -1923,7 +1923,7 @@ export default function App() {
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 15, fontWeight: 800, color: '#222222' }}>
-                        {pack.tokens.toLocaleString()} Calls[cite: 1]
+                        {pack.tokens.toLocaleString()} Calls
                       </span>
                       {pack.tag && (
                         <span style={{
@@ -1954,7 +1954,7 @@ export default function App() {
 
             {isProcessing && (
               <p style={{ textAlign: 'center', fontSize: 13, color: '#FF385C', fontWeight: 600, marginTop: 14, margin: '14px 0 0' }}>
-                Connecting to Razorpay gateway...[cite: 1]
+                Connecting to Razorpay gateway...
               </p>
             )}
           </div>

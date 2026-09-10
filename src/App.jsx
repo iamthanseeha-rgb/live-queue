@@ -909,7 +909,7 @@ export default function App() {
                 }}
                 style={{ background: 'transparent', color: '#222222', border: '1px solid #dddddd', padding: '9px 16px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
               >
-                Host Login
+                Admin Login / Sign Up
               </button>
             )}
           </div>

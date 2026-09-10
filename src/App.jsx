@@ -1919,7 +1919,7 @@ export default function App() {
                     transition: 'all 0.15s ease'
                   }}
                 >
-                  <div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 15, fontWeight: 800, color: '#222222' }}>
                         {pack.tokens.toLocaleString()} Calls
@@ -1938,7 +1938,9 @@ export default function App() {
                         </span>
                       )}
                     </div>
-                    <div style={{ fontSize: 12, color: '#717171', marginTop: 2 }}>{pack.name} Pack</div>
+                    <div style={{ fontSize: 12, color: '#717171', marginTop: 2, textAlign: 'left' }}>
+                      {pack.name} Pack
+                    </div>
                   </div>
 
                   <div style={{ textAlign: 'right' }}>

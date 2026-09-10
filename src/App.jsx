@@ -36,7 +36,7 @@ export default function App() {
   
   // Single Desk & Token state
   const [queue, setQueue] = useState(null);
-  const [remainingTokens, setRemainingTokens] = useState(1500);
+  const [remainingTokens, setRemainingTokens] = useState(null);
   const [accountStatus, setAccountStatus] = useState('Active');
   const [adminError, setAdminError] = useState('');
 
@@ -376,7 +376,7 @@ export default function App() {
       setAdminError(error.message);
     } else {
       setQueue({ ...queue, queue_position: nextPos });
-      const newTokens = Math.max(0, remainingTokens - 1);
+      const newTokens = Math.max(0, (remainingTokens || 0) - 1);
       setRemainingTokens(newTokens);
       if (session?.user?.id) {
         await supabase
@@ -663,7 +663,7 @@ export default function App() {
     win.document.close();
   }
 
-  const isBlocked = accountStatus === 'Block' || remainingTokens <= 0;
+  const isBlocked = accountStatus === 'Block' || (remainingTokens !== null && remainingTokens <= 0);
   const currentPublicLink = queue?.slug ? `${window.location.origin}/${queue.slug}` : '';
 
   // ══════════════════════════════════════════════════════════
@@ -1839,12 +1839,14 @@ export default function App() {
             <div style={{
               fontSize: 18,
               fontWeight: 800,
-              color: remainingTokens <= 100 ? '#c13515' : '#008a05',
-              backgroundColor: remainingTokens <= 100 ? '#fff8f6' : '#f0fdf4',
+              color: remainingTokens === null ? '#94a3b8' : remainingTokens <= 100 ? '#c13515' : '#008a05',
+              backgroundColor: remainingTokens === null ? '#f1f5f9' : remainingTokens <= 100 ? '#fff8f6' : '#f0fdf4',
               padding: '6px 12px',
-              borderRadius: 999
+              borderRadius: 999,
+              minWidth: 44,
+              textAlign: 'center'
             }}>
-              {remainingTokens}
+              {remainingTokens !== null ? remainingTokens : '...'}
             </div>
             <button
               onClick={() => setIsRechargeOpen(true)}
@@ -1875,6 +1877,22 @@ export default function App() {
         {adminError && (
           <div style={{ backgroundColor: '#fff8f6', color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 14, fontSize: 13, marginBottom: 16 }}>
             {adminError}
+          </div>
+        )}
+
+        {!queue && !adminError && (
+          <div style={{
+            backgroundColor: '#ffffff',
+            borderRadius: 24,
+            padding: '48px 20px',
+            border: '1px solid #ebebeb',
+            textAlign: 'center',
+            color: '#94a3b8',
+            fontSize: 14,
+            fontWeight: 500,
+            marginBottom: 16
+          }}>
+            Connecting to counter...
           </div>
         )}
 

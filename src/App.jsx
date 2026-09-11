@@ -302,7 +302,9 @@ export default function App() {
     setLoading(false);
     if (error) {
       setAuthError(error.message);
-    } else if (data?.session) {
+    } else if (data?.user && data?.user?.identities?.length === 0) {
+      setAuthError('An account with this email already exists. Please sign in instead.');
+    }else if (data?.session) {
       setCurrentPage('admin_dash');
       fetchAdminData(data.user.id);
     } else {

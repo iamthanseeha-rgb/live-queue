@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { QRCodeSVG } from 'qrcode.react';
 import { loadRazorpayScript } from './razorpay';
+import LandingPage from './LandingPage';
 
 const TOKEN_PACKS = [
   { id: 'pack_500', name: 'Starter', tokens: 500, price: 99, tag: null },
@@ -11,7 +12,7 @@ const TOKEN_PACKS = [
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [currentPage, setCurrentPage] = useState('home'); // 'home' | 'admin_login' | 'status' | 'admin_dash' | 'reset_password' | 'contact' | 'privacy' | 'terms' | 'refunds'
+  const [currentPage, setCurrentPage] = useState('home'); // 'home' | 'welcome' | 'admin_login' | 'status' | 'admin_dash' | 'reset_password' | 'contact' | 'privacy' | 'terms' | 'refunds'
   
   // Public search & status state
   const [inputQuery, setInputQuery] = useState('');
@@ -79,6 +80,7 @@ export default function App() {
     if (path === 'privacy') return 'privacy';
     if (path === 'terms') return 'terms';
     if (path === 'refunds') return 'refunds';
+    if (path === 'welcome') return 'welcome';
     if (path && path !== '' && path !== 'index.html') {
       return decodeURIComponent(path).toLowerCase();
     }
@@ -98,7 +100,7 @@ export default function App() {
 
   useEffect(() => {
     const slug = getRouteSlug();
-    if (slug === 'contact' || slug === 'privacy' || slug === 'terms' || slug === 'refunds') {
+    if (['contact', 'privacy', 'terms', 'refunds', 'welcome'].includes(slug)) {
       setCurrentPage(slug);
     } else if (slug) {
       setCurrentPage('status');
@@ -130,7 +132,7 @@ export default function App() {
   useEffect(() => {
     const handleLocationChange = () => {
       const slug = getRouteSlug();
-      if (['contact', 'privacy', 'terms', 'refunds'].includes(slug)) {
+      if (['contact', 'privacy', 'terms', 'refunds', 'welcome'].includes(slug)) {
         setCurrentPage(slug);
       } else if (slug) {
         setCurrentPage('status');
@@ -459,7 +461,7 @@ export default function App() {
       return;
     }
 
-    const RESERVED_SLUGS = ['contact', 'privacy', 'terms', 'refunds', 'admin', 'login', 'home', 'status'];
+    const RESERVED_SLUGS = ['contact', 'privacy', 'terms', 'refunds', 'welcome', 'admin', 'login', 'home', 'status'];
     if (RESERVED_SLUGS.includes(cleanSlug)) {
       setAdminError(`"/${cleanSlug}" is a reserved system name. Please choose a different slug.`);
       return;
@@ -693,6 +695,32 @@ export default function App() {
   const currentPublicLink = queue?.slug ? `${window.location.origin}/${queue.slug}` : '';
 
   // ══════════════════════════════════════════════════════════
+  // VIEW: DEDICATED LANDING PAGE (/welcome) FOR META ADS
+  // ══════════════════════════════════════════════════════════
+  if (currentPage === 'welcome') {
+    return (
+      <LandingPage
+        onGetStarted={() => {
+          switchAuthMode('signup');
+          setCurrentPage('admin_login');
+        }}
+        onSignIn={() => {
+          switchAuthMode('login');
+          setCurrentPage('admin_login');
+        }}
+        onGoHome={() => {
+          window.history.pushState({}, '', '/');
+          setCurrentPage('home');
+        }}
+        onNavigate={(page) => {
+          window.history.pushState({}, '', `/${page}`);
+          setCurrentPage(page);
+        }}
+      />
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
   // VIEW 1: PUBLIC / TV / MOBILE DISPLAY (Airbnb Colorful)
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'status') {
@@ -827,7 +855,7 @@ export default function App() {
                 lineHeight: 1.05,
                 margin: '8px 0 0',
                 letterSpacing: '-0.04em',
-                background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 100%)',
+                background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 55%, #D70466 100%)',
                 WebkitBackgroundClip: 'text',
                 WebkitTextFillColor: 'transparent'
               }}>
@@ -1069,7 +1097,7 @@ export default function App() {
   }
 
   // ══════════════════════════════════════════════════════════
-  // VIEW: CONTACT US (AIRBNB STYLE - CLEAN)
+  // VIEW: CONTACT Us (AIRBNB STYLE - CLEAN)
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'contact') {
     const whatsappUrl = "https://wa.me/918921677207?text=Hi%20LiveQueue%20Team%2C%20I%20have%20an%20issue%2Fsuggestion%3A";

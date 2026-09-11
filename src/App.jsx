@@ -281,6 +281,7 @@ export default function App() {
     if (error) {
       setAuthError(error.message);
     } else if (data?.user) {
+      window.history.replaceState({}, '', '/');
       setCurrentPage('admin_dash');
       fetchAdminData(data.user.id);
     }
@@ -325,6 +326,7 @@ export default function App() {
     } else if (data?.user && data?.user?.identities?.length === 0) {
       setAuthError('An account with this email already exists. Please sign in instead.');
     } else if (data?.session) {
+      window.history.replaceState({}, '', '/');
       setCurrentPage('admin_dash');
       fetchAdminData(data.user.id);
     } else {
@@ -701,10 +703,12 @@ export default function App() {
     return (
       <LandingPage
         onGetStarted={() => {
+          window.history.replaceState({}, '', '/');
           switchAuthMode('signup');
           setCurrentPage('admin_login');
         }}
         onSignIn={() => {
+          window.history.replaceState({}, '', '/');
           switchAuthMode('login');
           setCurrentPage('admin_login');
         }}
@@ -1097,7 +1101,7 @@ export default function App() {
   }
 
   // ══════════════════════════════════════════════════════════
-  // VIEW: CONTACT Us (AIRBNB STYLE - CLEAN)
+  // VIEW: CONTACT US (AIRBNB STYLE - CLEAN)
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'contact') {
     const whatsappUrl = "https://wa.me/918921677207?text=Hi%20LiveQueue%20Team%2C%20I%20have%20an%20issue%2Fsuggestion%3A";

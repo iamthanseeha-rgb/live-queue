@@ -126,6 +126,24 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Sync browser back/forward buttons with active page state
+  useEffect(() => {
+    const handleLocationChange = () => {
+      const slug = getRouteSlug();
+      if (['contact', 'privacy', 'terms', 'refunds'].includes(slug)) {
+        setCurrentPage(slug);
+      } else if (slug) {
+        setCurrentPage('status');
+        fetchQueueBySlug(slug);
+      } else {
+        setCurrentPage(session ? 'admin_dash' : 'home');
+      }
+    };
+
+    window.addEventListener('popstate', handleLocationChange);
+    return () => window.removeEventListener('popstate', handleLocationChange);
+  }, [session]);
+
   // Realtime display sync for status screen
   useEffect(() => {
     if (currentPage !== 'status' || !activeQueue?.queue_id) return;
@@ -304,7 +322,7 @@ export default function App() {
       setAuthError(error.message);
     } else if (data?.user && data?.user?.identities?.length === 0) {
       setAuthError('An account with this email already exists. Please sign in instead.');
-    }else if (data?.session) {
+    } else if (data?.session) {
       setCurrentPage('admin_dash');
       fetchAdminData(data.user.id);
     } else {
@@ -438,6 +456,12 @@ export default function App() {
 
     if (/^\d+$/.test(cleanSlug)) {
       setAdminError('Slug cannot be numbers only. Add letters.');
+      return;
+    }
+
+    const RESERVED_SLUGS = ['contact', 'privacy', 'terms', 'refunds', 'admin', 'login', 'home', 'status'];
+    if (RESERVED_SLUGS.includes(cleanSlug)) {
+      setAdminError(`"/${cleanSlug}" is a reserved system name. Please choose a different slug.`);
       return;
     }
 
@@ -803,7 +827,7 @@ export default function App() {
                 lineHeight: 1.05,
                 margin: '8px 0 0',
                 letterSpacing: '-0.04em',
-                background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 55%, #D70466 100%)',
+                background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 100%)',
                 WebkitBackgroundClip: 'text',
                 WebkitTextFillColor: 'transparent'
               }}>
@@ -1396,7 +1420,7 @@ export default function App() {
   if (currentPage === 'admin_login' && !session) {
     return (
       <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', padding: 16 }}>
-        <div style={{ maxWidth: 420, width: '100%', backgroundColor: '#ffffff', borderRadius: 24, boxShadow: '0 12px 36px rgba(0,0,0,0.08)', border: '1px solid #ebebeb', overflow: 'hidden' }}>
+        <div style={{ maxWidth: 420, width: '100%', maxHeight: '90vh', overflowY: 'auto', backgroundColor: '#ffffff', borderRadius: 24, boxShadow: '0 12px 36px rgba(0,0,0,0.08)', border: '1px solid #ebebeb' }}>
           <div style={{ display: 'flex', alignItems: 'center', padding: '18px 20px', borderBottom: '1px solid #ebebeb' }}>
             <button
               onClick={() => {

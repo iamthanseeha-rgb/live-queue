@@ -64,7 +64,7 @@ export default function LandingPage({ onGetStarted, onSignIn, onGoHome, onNaviga
           </button>
           <button
             onClick={onGetStarted}
-            style={{ background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)', color: '#ffffff', border: 'none', padding: '10px 18px', borderRadius: 999, fontWeight: 700, fontSize: 13, cursor: 'pointer', boxShadow: '0 2px 10px rgba(255, 56, 92, 0.25)' }}
+            style={{ background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)', color: '#ffffff', border: 'none', padding: '10px 18px', borderRadius: 999, fontWeight: 700, fontSize: 13, cursor: 'pointer', boxShadow: '0 2px 10px rgba(255, 56, 92, 0.25)' }}
           >
             Get Started
           </button>
@@ -103,7 +103,7 @@ export default function LandingPage({ onGetStarted, onSignIn, onGoHome, onNaviga
           <button
             onClick={onGetStarted}
             style={{
-              background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+              background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)',
               color: '#ffffff',
               border: 'none',
               padding: '16px 36px',
@@ -139,7 +139,7 @@ export default function LandingPage({ onGetStarted, onSignIn, onGoHome, onNaviga
           </a>
         </div>
 
-        <div style={{ marginTop: 24, fontSize: 13, color: '#9ca3af', fontWeight: 500 }}>
+        <div style={{ marginTop: 24, fontSize: 13, color: '#6b7280', fontWeight: 500 }}>
           ✓ Instant Setup • No Credit Card Required • 1,500 Complimentary Calls
         </div>
       </section>
@@ -194,7 +194,7 @@ export default function LandingPage({ onGetStarted, onSignIn, onGoHome, onNaviga
             <button
               onClick={onGetStarted}
               style={{
-                background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)',
                 color: '#ffffff',
                 border: 'none',
                 padding: '14px 32px',

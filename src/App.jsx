@@ -3,22 +3,36 @@ import { supabase } from './supabaseClient';
 import { QRCodeSVG } from 'qrcode.react';
 import { loadRazorpayScript } from './razorpay';
 import LandingPage from './LandingPage';
+import { normalizeSlug, validateSlug, safeDecode } from './lib/slug';
+import { unlockSound, playChime } from './lib/sound';
+import { friendlyError } from './lib/errors';
 
-const TOKEN_PACKS = [
-  { id: 'pack_500', name: 'Starter', tokens: 500, price: 99, tag: null },
-  { id: 'pack_1500', name: 'Standard', tokens: 1500, price: 249, tag: 'Popular' },
-  { id: 'pack_5000', name: 'Pro', tokens: 5000, price: 699, tag: 'Best Value' },
-];
+const STATIC_PAGES = ['contact', 'privacy', 'terms', 'refunds', 'welcome', 'login'];
+const LOW_BALANCE = 50;          // show the "running low" banner at or below this many calls
+const TITLE_MAX = 60;
+const SUBTITLE_MAX = 80;
+const POLL_LIVE_MS = 60000;      // safety re-sync for public displays even when realtime looks healthy
+const POLL_OFFLINE_MS = 15000;   // faster re-sync while realtime is reconnecting
+
+const escapeHtml = (value) =>
+  String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const formatInr = (paise) => `₹${(paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
 export default function App() {
   const [session, setSession] = useState(null);
   const [currentPage, setCurrentPage] = useState('home'); // 'home' | 'welcome' | 'admin_login' | 'status' | 'admin_dash' | 'reset_password' | 'contact' | 'privacy' | 'terms' | 'refunds'
-  
+  const currentPageRef = useRef('home');
+
   // Public search & status state
   const [inputQuery, setInputQuery] = useState('');
   const [activeQueue, setActiveQueue] = useState(null);
   const [lookupError, setLookupError] = useState('');
+  const [displayStatus, setDisplayStatus] = useState('connecting'); // 'connecting' | 'live' | 'reconnecting'
+  const [soundOn, setSoundOn] = useState(false);
   const prevPosRef = useRef(null);
+  const activeQueueRef = useRef(null);
+  const statusSlugRef = useRef(null);
   const isFetchingRef = useRef(false);
 
   // Admin Auth state
@@ -34,16 +48,23 @@ export default function App() {
   const [resendLoading, setResendLoading] = useState(false);
   const [authError, setAuthError] = useState('');
   const [authSuccess, setAuthSuccess] = useState('');
-  
+
   // Single Desk & Token state
   const [queue, setQueue] = useState(null);
   const [remainingTokens, setRemainingTokens] = useState(null);
   const [accountStatus, setAccountStatus] = useState('Active');
   const [adminError, setAdminError] = useState('');
+  const [deskFailed, setDeskFailed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const deskUserRef = useRef(null); // id of the host whose desk is currently loaded
 
   // Recharge modal state
   const [isRechargeOpen, setIsRechargeOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [packs, setPacks] = useState(null);
+  const [packsError, setPacksError] = useState('');
+  const [paymentNotice, setPaymentNotice] = useState(null); // { type: 'info'|'success'|'error', text }
 
   // Admin Edit Counter state
   const [isEditing, setIsEditing] = useState(false);
@@ -51,41 +72,16 @@ export default function App() {
   const [editSubtitle, setEditSubtitle] = useState('');
   const [editSlug, setEditSlug] = useState('');
 
-  const playAlertSound = () => {
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(587.33, ctx.currentTime);
-      osc.frequency.setValueAtTime(880.00, ctx.currentTime + 0.12);
-
-      gain.gain.setValueAtTime(0.25, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.6);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start();
-      osc.stop(ctx.currentTime + 0.6);
-    } catch (err) {
-      console.warn('Audio click required:', err);
-    }
-  };
+  useEffect(() => { currentPageRef.current = currentPage; }, [currentPage]);
+  useEffect(() => { activeQueueRef.current = activeQueue; }, [activeQueue]);
 
   const getRouteSlug = () => {
     const path = window.location.pathname.replace(/^\/+|\/+$/g, '');
-    if (path === 'contact') return 'contact';
-    if (path === 'privacy') return 'privacy';
-    if (path === 'terms') return 'terms';
-    if (path === 'refunds') return 'refunds';
-    if (path === 'welcome') return 'welcome';
-    if (path && path !== '' && path !== 'index.html') {
-      return decodeURIComponent(path).toLowerCase();
-    }
-    return null;
+    if (!path || path === 'index.html') return null;
+    return safeDecode(path).toLowerCase();
   };
+
+  const pageForSlug = (slug) => (slug === 'login' ? 'admin_login' : slug);
 
   const switchAuthMode = (mode) => {
     setAuthMode(mode);
@@ -98,30 +94,95 @@ export default function App() {
     setForgotSubmitted(false);
   };
 
+  const goToLogin = (mode = 'login') => {
+    switchAuthMode(mode);
+    window.history.pushState({}, '', '/login');
+    setCurrentPage('admin_login');
+  };
+
+  // ── Desk loading ─────────────────────────────────────────
+  function clearDesk() {
+    deskUserRef.current = null;
+    setQueue(null);
+    setRemainingTokens(null);
+    setAccountStatus('Active');
+    setAdminError('');
+    setDeskFailed(false);
+    setIsEditing(false);
+    setIsRechargeOpen(false);
+    setPaymentNotice(null);
+  }
+
+  function applyDesk(data) {
+    if (!data) return;
+    if (data.queue) setQueue(data.queue);
+    if (typeof data.remaining_tokens === 'number') setRemainingTokens(data.remaining_tokens);
+    if (data.status) setAccountStatus(data.status);
+  }
+
+  // One server call creates the host's rows if they're missing (idempotent, race-safe)
+  // and returns desk + balance + status. Errors never fall back to defaults.
+  async function loadDesk(uid, { silent = false } = {}) {
+    if (!uid) return;
+    deskUserRef.current = uid;
+    if (!silent) setDeskFailed(false);
+    const { data, error } = await supabase.rpc('ensure_my_desk');
+    if (deskUserRef.current !== uid) return; // a different host signed in meanwhile – drop stale result
+    if (error || !data) {
+      if (!silent) {
+        setDeskFailed(true);
+        setAdminError(friendlyError(error, 'Couldn’t load your desk. Check your connection and retry.'));
+      }
+      return;
+    }
+    setDeskFailed(false);
+    if (!silent) setAdminError('');
+    applyDesk(data);
+  }
+
+  // ── Auth wiring ──────────────────────────────────────────
   useEffect(() => {
     const slug = getRouteSlug();
-    if (['contact', 'privacy', 'terms', 'refunds', 'welcome'].includes(slug)) {
-      setCurrentPage(slug);
+    if (STATIC_PAGES.includes(slug)) {
+      setCurrentPage(pageForSlug(slug));
     } else if (slug) {
       setCurrentPage('status');
       fetchQueueBySlug(slug);
     }
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session && !getRouteSlug()) {
-        setCurrentPage('admin_dash');
-        fetchAdminData(session.user.id);
-      }
-    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, newSession) => {
+      setSession(newSession);
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      setSession(session);
       if (event === 'PASSWORD_RECOVERY') {
         setCurrentPage('reset_password');
-      } else if (session && !getRouteSlug()) {
+        return;
+      }
+
+      if (!newSession) {
+        clearDesk();
+        if (['admin_dash', 'reset_password'].includes(currentPageRef.current)) {
+          window.history.replaceState({}, '', '/');
+          setCurrentPage('home');
+        }
+        return;
+      }
+
+      const route = getRouteSlug();
+      if (event === 'INITIAL_SESSION' && (!route || route === 'login')) {
+        window.history.replaceState({}, '', '/');
         setCurrentPage('admin_dash');
-        fetchAdminData(session.user.id);
+      }
+      if (event === 'SIGNED_IN' && currentPageRef.current === 'admin_login') {
+        window.history.replaceState({}, '', '/');
+        setCurrentPage('admin_dash');
+      }
+
+      // Load the desk only when the signed-in host changes (not on hourly token refresh).
+      const uid = newSession.user.id;
+      if (deskUserRef.current !== uid) {
+        clearDesk();
+        // Supabase advises not to call the client synchronously inside this callback.
+        setTimeout(() => loadDesk(uid), 0);
       }
     });
 
@@ -132,8 +193,13 @@ export default function App() {
   useEffect(() => {
     const handleLocationChange = () => {
       const slug = getRouteSlug();
-      if (['contact', 'privacy', 'terms', 'refunds', 'welcome'].includes(slug)) {
-        setCurrentPage(slug);
+      if (STATIC_PAGES.includes(slug)) {
+        if (slug === 'login' && session) {
+          window.history.replaceState({}, '', '/');
+          setCurrentPage('admin_dash');
+        } else {
+          setCurrentPage(pageForSlug(slug));
+        }
       } else if (slug) {
         setCurrentPage('status');
         fetchQueueBySlug(slug);
@@ -146,144 +212,201 @@ export default function App() {
     return () => window.removeEventListener('popstate', handleLocationChange);
   }, [session]);
 
-  // Realtime display sync for status screen
+  // Browser tab titles (also what WhatsApp / bookmarks show)
   useEffect(() => {
-    if (currentPage !== 'status' || !activeQueue?.queue_id) return;
+    const titles = {
+      home: 'LiveQueue – Live token display for clinics',
+      welcome: 'LiveQueue – Live token display for clinics',
+      admin_login: 'Sign in – LiveQueue',
+      admin_dash: 'Desk Manager – LiveQueue',
+      reset_password: 'Set new password – LiveQueue',
+      contact: 'Contact – LiveQueue',
+      privacy: 'Privacy Policy – LiveQueue',
+      terms: 'Terms of Service – LiveQueue',
+      refunds: 'Refund Policy – LiveQueue',
+    };
+    if (currentPage === 'status') {
+      document.title = activeQueue
+        ? `${activeQueue.queue_position ? `Now serving ${activeQueue.queue_position}` : 'Not started'} · ${activeQueue.queue_title} – LiveQueue`
+        : 'Live queue – LiveQueue';
+    } else {
+      document.title = titles[currentPage] || 'LiveQueue';
+    }
+  }, [currentPage, activeQueue?.queue_position, activeQueue?.queue_title]);
 
-    const channel = supabase
-      .channel(`public_room_${activeQueue.queue_id}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'queue_details', filter: `queue_id=eq.${activeQueue.queue_id}` },
-        (payload) => {
-          const row = payload.new;
-          if (prevPosRef.current !== null && row.queue_position > prevPosRef.current) {
-            playAlertSound();
-          }
-          prevPosRef.current = row.queue_position;
-          setActiveQueue(row);
-        }
-      )
-      .subscribe();
-
-    return () => supabase.removeChannel(channel);
-  }, [currentPage, activeQueue?.queue_id]);
+  // ── Public display ───────────────────────────────────────
+  function applyPublicRow(row) {
+    if (!row) return;
+    const prev = prevPosRef.current;
+    if (prev !== null && row.queue_position > prev) playChime();
+    prevPosRef.current = row.queue_position;
+    setActiveQueue(row);
+  }
 
   async function fetchQueueBySlug(slug) {
-    setLookupError('');
-    const { data, error } = await supabase
-      .from('queue_details')
-      .select('*')
-      .eq('slug', slug.toLowerCase())
-      .maybeSingle();
-
-    if (error || !data) {
-      setLookupError(`Queue "/${slug}" not found.`);
+    if (!slug) return;
+    const cleanSlug = slug.toLowerCase();
+    if (statusSlugRef.current !== cleanSlug) {
+      // Different desk: forget the previous one so its number never flashes on screen.
+      statusSlugRef.current = cleanSlug;
+      prevPosRef.current = null;
       setActiveQueue(null);
-    } else {
-      prevPosRef.current = data.queue_position;
-      setActiveQueue(data);
+      setDisplayStatus('connecting');
     }
+    setLookupError('');
+    if (isFetchingRef.current === cleanSlug) return; // same request already in flight
+    isFetchingRef.current = cleanSlug;
+    const { data, error } = await supabase.rpc('get_public_queue', { p_slug: cleanSlug });
+    if (isFetchingRef.current === cleanSlug) isFetchingRef.current = false;
+    if (statusSlugRef.current !== cleanSlug) return;
+
+    if (error) {
+      setDisplayStatus('reconnecting');
+      if (!activeQueueRef.current) setLookupError(friendlyError(error, 'Couldn’t load this queue. Retrying…'));
+      return;
+    }
+    if (!data) {
+      setLookupError(`No queue found at “/${cleanSlug}”. Check the link on the clinic’s poster.`);
+      setActiveQueue(null);
+      return;
+    }
+    if (data.slug && data.slug !== cleanSlug) {
+      // The clinic renamed its link – keep old posters working and show the new address.
+      statusSlugRef.current = data.slug;
+      window.history.replaceState({}, '', `/${data.slug}`);
+    }
+    applyPublicRow(data);
+  }
+
+  // Realtime + self-healing re-sync for TVs and phones
+  useEffect(() => {
+    if (currentPage !== 'status' || !activeQueue?.public_key) return;
+
+    const refetch = () => fetchQueueBySlug(statusSlugRef.current);
+    const channel = supabase
+      .channel(`queue:${activeQueue.public_key}`)
+      .on('broadcast', { event: 'queue_update' }, ({ payload }) => {
+        applyPublicRow({ ...activeQueueRef.current, ...payload });
+        setDisplayStatus('live');
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setDisplayStatus('live');
+          refetch(); // catch up on anything missed while disconnected
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          setDisplayStatus('reconnecting');
+        }
+      });
+
+    const onVisible = () => { if (document.visibilityState === 'visible') refetch(); };
+    const onOnline = () => refetch();
+    const onOffline = () => setDisplayStatus('reconnecting');
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+
+    let timer;
+    const schedule = () => {
+      timer = setTimeout(() => { refetch(); schedule(); }, navigator.onLine === false ? POLL_OFFLINE_MS : POLL_LIVE_MS);
+    };
+    schedule();
+
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+      supabase.removeChannel(channel);
+    };
+  }, [currentPage, activeQueue?.public_key]);
+
+  // Keep TV / tablet screens awake while showing the queue
+  useEffect(() => {
+    if (currentPage !== 'status' || !('wakeLock' in navigator)) return;
+    let lock = null;
+    const request = async () => {
+      try {
+        if (document.visibilityState === 'visible') lock = await navigator.wakeLock.request('screen');
+      } catch { /* not allowed (battery saver etc.) – ignore */ }
+    };
+    request();
+    document.addEventListener('visibilitychange', request);
+    return () => {
+      document.removeEventListener('visibilitychange', request);
+      lock?.release?.().catch(() => {});
+    };
+  }, [currentPage]);
+
+  function handleEnableSound() {
+    setSoundOn(unlockSound());
+  }
+
+  function toggleFullscreen() {
+    const el = document.documentElement;
+    if (!document.fullscreenElement) el.requestFullscreen?.().catch(() => {});
+    else document.exitFullscreen?.().catch(() => {});
   }
 
   function handleSearchSubmit(e) {
     e.preventDefault();
-    const cleanSlug = inputQuery.trim().toLowerCase().replace(/^\/+|\/+$/g, '');
-    if (!cleanSlug) return;
+    const cleanSlug = normalizeSlug(inputQuery);
+    if (!cleanSlug) {
+      setLookupError('Enter the link name from the clinic’s poster, e.g. dr-adam.');
+      return;
+    }
     window.history.pushState({}, '', `/${cleanSlug}`);
     setCurrentPage('status');
     fetchQueueBySlug(cleanSlug);
   }
 
-  async function fetchAdminData(adminId) {
-    if (!adminId) return;
-    setAdminError('');
+  // ── Dashboard: stay in sync with other devices on the same desk ──
+  useEffect(() => {
+    if (currentPage !== 'admin_dash' || !queue?.public_key) return;
+    const uid = deskUserRef.current;
+    let firstSubscribe = true;
+    const channel = supabase
+      .channel(`queue:${queue.public_key}`)
+      .on('broadcast', { event: 'queue_update' }, ({ payload }) => {
+        setQueue((q) => (q && q.queue_id === payload.queue_id ? { ...q, ...payload } : q));
+        loadDesk(uid, { silent: true }); // another device may have used a call – refresh balance
+      })
+      .subscribe((status) => {
+        // after a reconnect, catch up on anything other devices did meanwhile
+        if (status === 'SUBSCRIBED' && !firstSubscribe) loadDesk(uid, { silent: true });
+        if (status === 'SUBSCRIBED') firstSubscribe = false;
+      });
+    const onVisible = () => { if (document.visibilityState === 'visible') loadDesk(uid, { silent: true }); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onVisible);
+      supabase.removeChannel(channel);
+    };
+  }, [currentPage, queue?.public_key]);
 
-    try {
-      const { data: adminData } = await supabase
-        .from('admin')
-        .select('status, valid_until')
-        .eq('admin_id', adminId)
-        .maybeSingle();
-
-      if (adminData) {
-        setAccountStatus(adminData.status);
-      } else {
-        await supabase.from('admin').insert([{ admin_id: adminId, status: 'Active' }]);
-        setAccountStatus('Active');
-      }
-
-      const { data: usageData } = await supabase
-        .from('usage')
-        .select('remaining_tokens')
-        .eq('admin_id', adminId)
-        .maybeSingle();
-
-      if (usageData) {
-        setRemainingTokens(usageData.remaining_tokens);
-      } else {
-        await supabase.from('usage').insert([{ admin_id: adminId, remaining_tokens: 1500 }]);
-        setRemainingTokens(1500);
-      }
-
-      // Fetch the single queue for this admin
-      const { data: queueList, error: qErr } = await supabase
-        .from('queue_details')
-        .select('*')
-        .eq('admin_id', adminId)
-        .order('queue_id', { ascending: true });
-
-      if (queueList && queueList.length > 0) {
-        const q = queueList[0];
-        setQueue(q);
-        setEditTitle(q.queue_title);
-        setEditSubtitle(q.queue_subtitle || '');
-        setEditSlug(q.slug || '');
-      } else if (!qErr) {
-        const defaultSlug = `desk-${Math.floor(1000 + Math.random() * 9000)}`;
-        const { data: newQueue } = await supabase
-          .from('queue_details')
-          .insert([{
-            admin_id: adminId,
-            queue_title: 'Counter 1',
-            queue_subtitle: 'Consultation Desk',
-            slug: defaultSlug,
-            queue_position: 0
-          }])
-          .select()
-          .single();
-        if (newQueue) {
-          setQueue(newQueue);
-          setEditTitle(newQueue.queue_title);
-          setEditSubtitle(newQueue.queue_subtitle || '');
-          setEditSlug(newQueue.slug || '');
-        }
-      }
-    } catch (err) {
-      console.error('fetchAdminData error:', err);
-      setAdminError('Failed to load controller data. Please refresh.');
-    }
-  }
-
-  // Auth Functions
+  // ── Auth Functions ───────────────────────────────────────
   async function handleLogin(e) {
     e.preventDefault();
     setLoading(true);
     setAuthError('');
     setAuthSuccess('');
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { error } = await supabase.auth.signInWithPassword({
       email: email.trim(),
       password: password,
     });
 
     setLoading(false);
     if (error) {
-      setAuthError(error.message);
-    } else if (data?.user) {
-      window.history.replaceState({}, '', '/');
-      setCurrentPage('admin_dash');
-      fetchAdminData(data.user.id);
+      setAuthError(/invalid login/i.test(error.message)
+        ? 'Email or password is incorrect.'
+        : /confirm/i.test(error.message)
+          ? 'Please confirm your email first – check your inbox for the activation link.'
+          : friendlyError(error, error.message));
+    } else {
+      setPassword('');
+      // Navigation to the dashboard + desk loading happen in the SIGNED_IN listener.
     }
   }
 
@@ -299,8 +422,8 @@ export default function App() {
       return;
     }
 
-    if (password.length < 6) {
-      setAuthError('Password must be at least 6 characters.');
+    if (password.length < 8) {
+      setAuthError('Use at least 8 characters for your password.');
       setLoading(false);
       return;
     }
@@ -322,14 +445,14 @@ export default function App() {
 
     setLoading(false);
     if (error) {
-      setAuthError(error.message);
-    } else if (data?.user && data?.user?.identities?.length === 0) {
-      setAuthError('An account with this email already exists. Please sign in instead.');
+      setAuthError(/weak|pwned|leaked/i.test(error.message)
+        ? 'This password is too easy to guess. Please choose a stronger one.'
+        : friendlyError(error, error.message));
     } else if (data?.session) {
-      window.history.replaceState({}, '', '/');
-      setCurrentPage('admin_dash');
-      fetchAdminData(data.user.id);
+      // Email confirmation is off – the SIGNED_IN listener takes over.
     } else {
+      // Same screen for new and already-registered emails, so the form can't be used
+      // to check who has an account.
       setSignupStep('link_sent');
     }
   }
@@ -346,7 +469,7 @@ export default function App() {
     });
 
     setResendLoading(false);
-    if (error) setAuthError(error.message);
+    if (error) setAuthError(friendlyError(error, error.message));
     else setAuthSuccess('A fresh verification link has been sent to your email.');
   }
 
@@ -360,7 +483,7 @@ export default function App() {
     });
 
     setLoading(false);
-    if (error) setAuthError(error.message);
+    if (error) setAuthError(friendlyError(error, error.message));
     else setForgotSubmitted(true);
   }
 
@@ -369,8 +492,8 @@ export default function App() {
     setLoading(true);
     setAuthError('');
 
-    if (newPassword.length < 6) {
-      setAuthError('New password must be at least 6 characters.');
+    if (newPassword.length < 8) {
+      setAuthError('Use at least 8 characters for your new password.');
       setLoading(false);
       return;
     }
@@ -378,183 +501,219 @@ export default function App() {
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     setLoading(false);
     if (error) {
-      setAuthError(error.message);
+      setAuthError(friendlyError(error, error.message));
     } else {
-      setAuthSuccess('Password updated! Redirecting...');
-      setTimeout(() => setCurrentPage('admin_dash'), 700);
+      setAuthSuccess('Password updated! Opening your desk…');
+      setNewPassword('');
+      setTimeout(() => {
+        window.history.replaceState({}, '', '/');
+        setCurrentPage('admin_dash');
+      }, 700);
     }
   }
 
-  // Queue Counter Controls
-  async function advanceQueue() {
-    if (!queue) return;
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    clearDesk(); // never leave the previous host's desk on a shared reception PC
+    switchAuthMode('login');
+    window.history.replaceState({}, '', '/');
+    setCurrentPage('home');
+  }
+
+  // ── Queue Counter Controls (all server-side, atomic) ─────
+  async function runQueueAction(fn) {
+    if (!queue || busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
     setAdminError('');
-    const nextPos = queue.queue_position + 1;
-
-    const { error } = await supabase
-      .from('queue_details')
-      .update({ queue_position: nextPos, updated_at: new Date().toISOString() })
-      .eq('queue_id', queue.queue_id);
-
+    const { data, error } = await supabase.rpc(fn, { p_queue_id: queue.queue_id });
+    busyRef.current = false;
+    setBusy(false);
     if (error) {
-      setAdminError(error.message);
-    } else {
-      setQueue({ ...queue, queue_position: nextPos });
-      const newTokens = Math.max(0, (remainingTokens || 0) - 1);
-      setRemainingTokens(newTokens);
-      if (session?.user?.id) {
-        await supabase
-          .from('usage')
-          .update({ remaining_tokens: newTokens })
-          .eq('admin_id', session.user.id);
-      }
+      setAdminError(friendlyError(error));
+      loadDesk(deskUserRef.current, { silent: true });
+      return;
     }
+    applyDesk(data);
   }
 
-  async function previousQueue() {
-    if (!queue || queue.queue_position <= 0) return;
-    setAdminError('');
-    const prevPos = queue.queue_position - 1;
+  const advanceQueue = () => runQueueAction('call_next');
 
-    const { error } = await supabase
-      .from('queue_details')
-      .update({ queue_position: prevPos, updated_at: new Date().toISOString() })
-      .eq('queue_id', queue.queue_id);
+  const previousQueue = () => {
+    if (queue && queue.queue_position > 0) runQueueAction('call_previous');
+  };
 
-    if (error) {
-      setAdminError(error.message);
-    } else {
-      setQueue({ ...queue, queue_position: prevPos });
-    }
-  }
-
-  async function resetQueue() {
+  const resetQueue = () => {
     if (!queue || !window.confirm(`Reset "${queue.queue_title}" back to token 0?`)) return;
-    const { error } = await supabase
-      .from('queue_details')
-      .update({ queue_position: 0, updated_at: new Date().toISOString() })
-      .eq('queue_id', queue.queue_id);
+    runQueueAction('reset_queue');
+  };
 
-    if (error) {
-      setAdminError(error.message);
-    } else {
-      setQueue({ ...queue, queue_position: 0 });
+  function startEditing() {
+    if (!queue) return;
+    setEditTitle(queue.queue_title || '');
+    setEditSubtitle(queue.queue_subtitle || '');
+    setEditSlug(queue.slug || '');
+    setAdminError('');
+    setIsEditing(true);
+  }
+
+  function cancelEditing() {
+    setIsEditing(false);
+    setAdminError('');
+    if (queue) {
+      setEditTitle(queue.queue_title || '');
+      setEditSubtitle(queue.queue_subtitle || '');
+      setEditSlug(queue.slug || '');
     }
   }
 
   async function saveDetails(e) {
     e.preventDefault();
     setAdminError('');
-    
-    const cleanSlug = editSlug
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9-]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
 
-    if (!cleanSlug) {
-      setAdminError('Slug cannot be empty.');
-      return;
-    }
+    const title = editTitle.trim().replace(/\s+/g, ' ');
+    const subtitle = editSubtitle.trim().replace(/\s+/g, ' ');
+    if (!title) { setAdminError('Please enter a counter name, e.g. Dr. Adam.'); return; }
+    if (title.length > TITLE_MAX) { setAdminError(`Keep the counter name to ${TITLE_MAX} characters or fewer.`); return; }
+    if (subtitle.length > SUBTITLE_MAX) { setAdminError(`Keep the subtitle to ${SUBTITLE_MAX} characters or fewer.`); return; }
 
-    if (/^\d+$/.test(cleanSlug)) {
-      setAdminError('Slug cannot be numbers only. Add letters.');
-      return;
-    }
+    const cleanSlug = normalizeSlug(editSlug);
+    const slugError = validateSlug(editSlug, cleanSlug);
+    if (slugError) { setAdminError(slugError); return; }
 
-    const RESERVED_SLUGS = ['contact', 'privacy', 'terms', 'refunds', 'welcome', 'admin', 'login', 'home', 'status'];
-    if (RESERVED_SLUGS.includes(cleanSlug)) {
-      setAdminError(`"/${cleanSlug}" is a reserved system name. Please choose a different slug.`);
-      return;
-    }
+    if (cleanSlug !== queue.slug && !window.confirm(
+      `Change your public link to /${cleanSlug}?\n\nPeople using the old link /${queue.slug} will be redirected, but please print a new poster so it shows the new address.`
+    )) return;
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('queue_details')
-      .update({
-        queue_title: editTitle,
-        queue_subtitle: editSubtitle,
-        slug: cleanSlug
-      })
-      .eq('queue_id', queue.queue_id);
+      .update({ queue_title: title, queue_subtitle: subtitle, slug: cleanSlug })
+      .eq('queue_id', queue.queue_id)
+      .select()
+      .single();
 
     if (error) {
-      if (error.code === '23505') {
-        setAdminError('This custom URL slug is already taken.');
-      } else {
-        setAdminError(error.message);
-      }
+      setAdminError(error.code === '23505'
+        ? `The link “/${cleanSlug}” is already taken. Please choose another.`
+        : friendlyError(error));
     } else {
-      setQueue({ ...queue, queue_title: editTitle, queue_subtitle: editSubtitle, slug: cleanSlug });
+      setQueue(data);
       setIsEditing(false);
     }
   }
 
+  // ── Recharge (Razorpay order → checkout → server verification) ──
+  async function openRecharge() {
+    setIsRechargeOpen(true);
+    setPaymentNotice(null);
+    if (packs) return;
+    setPacksError('');
+    const { data, error } = await supabase
+      .from('token_packs')
+      .select('id, name, tokens, price_paise, tag')
+      .eq('active', true)
+      .order('sort', { ascending: true });
+    if (error || !data?.length) setPacksError(friendlyError(error, 'Couldn’t load recharge packs. Please try again.'));
+    else setPacks(data);
+  }
+
+  function closeRecharge() {
+    if (isProcessing) return;
+    setIsRechargeOpen(false);
+    setPaymentNotice(null);
+  }
+
+  // If the browser couldn't confirm the payment, the Razorpay webhook still credits it –
+  // keep refreshing the balance for a short while so it appears without a reload.
+  function refreshBalanceSoon() {
+    const uid = deskUserRef.current;
+    [4000, 12000, 30000].forEach((ms) => setTimeout(() => loadDesk(uid, { silent: true }), ms));
+  }
+
   async function handleRecharge(pack) {
+    if (isProcessing) return;
     setIsProcessing(true);
-    setAdminError('');
+    setPaymentNotice(null);
 
     const loaded = await loadRazorpayScript();
     if (!loaded) {
-      setAdminError('Razorpay failed to initialize. Check your connection.');
+      setPaymentNotice({ type: 'error', text: 'Couldn’t open Razorpay. Check your internet connection and try again.' });
       setIsProcessing(false);
       return;
     }
 
-    const options = {
-      key: import.meta.env.VITE_RAZORPAY_KEY_ID,
-      amount: pack.price * 100,
-      currency: 'INR',
+    const { data: order, error: orderError } = await supabase.functions.invoke('create-order', {
+      body: { pack_id: pack.id },
+    });
+    if (orderError || !order?.order_id) {
+      setPaymentNotice({ type: 'error', text: 'Couldn’t start the payment. Please try again in a moment.' });
+      setIsProcessing(false);
+      return;
+    }
+
+    const rzp = new window.Razorpay({
+      key: order.key_id,
+      order_id: order.order_id,
+      amount: order.amount,
+      currency: order.currency,
       name: 'LiveQueue',
-      description: `Recharge ${pack.tokens.toLocaleString()} Tokens`,
-      handler: async function () {
-        try {
-          const updatedTokens = (remainingTokens || 0) + pack.tokens;
-
-          const { error } = await supabase
-            .from('usage')
-            .update({ remaining_tokens: updatedTokens })
-            .eq('admin_id', session.user.id);
-
-          if (error) throw error;
-
-          setRemainingTokens(updatedTokens);
-          setIsRechargeOpen(false);
-        } catch (err) {
-          console.error('Balance update failed:', err);
-          setAdminError('Payment captured, but failed to credit tokens. Contact support.');
-        } finally {
-          setIsProcessing(false);
-        }
-      },
+      description: `${pack.tokens.toLocaleString('en-IN')} calls · ${pack.name} pack`,
       prefill: { email: session?.user?.email || '' },
-      theme: { color: '#FF385C' },
+      notes: { pack_id: pack.id },
+      theme: { color: '#E00B41' },
+      handler: async (response) => {
+        setPaymentNotice({ type: 'info', text: 'Payment received. Adding calls to your balance…' });
+        const { data: result, error: verifyError } = await supabase.functions.invoke('verify-payment', {
+          body: {
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature,
+          },
+        });
+        if (verifyError || !result?.ok) {
+          setPaymentNotice({
+            type: 'info',
+            text: `Payment received. Your calls will appear within a minute. If they don’t, WhatsApp us with payment ID ${response.razorpay_payment_id}.`,
+          });
+          refreshBalanceSoon();
+        } else {
+          if (typeof result.remaining_tokens === 'number') setRemainingTokens(result.remaining_tokens);
+          setPaymentNotice({ type: 'success', text: `${pack.tokens.toLocaleString('en-IN')} calls added to your balance.` });
+        }
+        setIsProcessing(false);
+      },
       modal: { ondismiss: () => setIsProcessing(false) },
-    };
-
-    const rzp = new window.Razorpay(options);
+    });
+    rzp.on('payment.failed', (resp) => {
+      setPaymentNotice({ type: 'error', text: `Payment failed${resp?.error?.description ? `: ${resp.error.description}` : ''}. Please try again.` });
+      setIsProcessing(false);
+    });
     rzp.open();
   }
 
   // Print poster function for PDF generation
   function handlePrintPoster() {
     const svgEl = document.getElementById('poster-qr-code');
-    if (!svgEl) return;
+    if (!svgEl || !queue) return;
     const svgData = new XMLSerializer().serializeToString(svgEl);
-    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-    const qrUrl = URL.createObjectURL(svgBlob);
+    const qrDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgData)}`;
 
     const win = window.open('', '_blank');
     if (!win) {
-      alert('Please allow popups to open the printable PDF.');
+      alert('Please allow pop-ups for this site to print the poster.');
       return;
     }
+
+    const title = escapeHtml(queue.queue_title);
+    const subtitle = escapeHtml(queue.queue_subtitle || 'Consultation Counter');
+    const link = escapeHtml(currentPublicLink.replace(/^https?:\/\//, ''));
 
     win.document.write(`
       <!DOCTYPE html>
       <html>
         <head>
-          <title>${queue.queue_title} - Printable QR Code Poster</title>
+          <meta charset="utf-8" />
+          <title>${title} - Printable QR Code Poster</title>
           <style>
             @page {
               size: A4 portrait;
@@ -574,7 +733,7 @@ export default function App() {
               display: flex;
               flex-direction: column;
               align-items: center;
-              justifyContent: space-between;
+              justify-content: space-between;
               min-height: 100vh;
               text-align: center;
             }
@@ -582,7 +741,7 @@ export default function App() {
               display: inline-block;
               background: #fff1f2;
               border: 2px solid #fecdd3;
-              color: #FF385C;
+              color: #C8093A;
               font-size: 14px;
               font-weight: 800;
               letter-spacing: 2px;
@@ -597,12 +756,14 @@ export default function App() {
               margin: 0 0 10px;
               letter-spacing: -1.5px;
               line-height: 1.15;
+              overflow-wrap: anywhere;
             }
             .subtitle {
               font-size: 24px;
-              color: #FF385C;
+              color: #C8093A;
               font-weight: 600;
               margin: 0 0 40px;
+              overflow-wrap: anywhere;
             }
             .qr-box {
               background: #ffffff;
@@ -634,7 +795,7 @@ export default function App() {
             }
             .instruction-text {
               font-size: 14px;
-              color: #64748b;
+              color: #475569;
               margin: 0;
               line-height: 1.5;
             }
@@ -648,10 +809,11 @@ export default function App() {
               padding: 12px 28px;
               border-radius: 999px;
               margin-top: 12px;
+              overflow-wrap: anywhere;
             }
             .footer {
               font-size: 13px;
-              color: #94a3b8;
+              color: #64748b;
               font-weight: 600;
               letter-spacing: 0.5px;
             }
@@ -660,13 +822,13 @@ export default function App() {
         <body>
           <div>
             <div class="header-badge">LIVE QUEUE STATUS</div>
-            <h1>${queue.queue_title}</h1>
-            <div class="subtitle">${queue.queue_subtitle || 'Consultation Counter'}</div>
+            <h1>${title}</h1>
+            <div class="subtitle">${subtitle}</div>
           </div>
 
           <div>
             <div class="qr-box">
-              <img src="${qrUrl}" alt="Live Queue QR Code" />
+              <img src="${qrDataUrl}" alt="Live Queue QR Code" />
             </div>
 
             <div class="instruction-card">
@@ -674,7 +836,7 @@ export default function App() {
               <p class="instruction-text">
                 Point your phone camera at the QR code above or visit the link below to watch the live queue anywhere.
               </p>
-              <div class="link-pill">${currentPublicLink.replace(/^https?:\/\//, '')}</div>
+              <div class="link-pill">${link}</div>
             </div>
           </div>
 
@@ -693,8 +855,12 @@ export default function App() {
     win.document.close();
   }
 
-  const isBlocked = accountStatus === 'Block' || (remainingTokens !== null && remainingTokens <= 0);
+  const isAccountBlocked = accountStatus === 'Block';
+  const isOutOfCalls = remainingTokens !== null && remainingTokens <= 0;
+  const isBlocked = isAccountBlocked || isOutOfCalls;
+  const isLowBalance = remainingTokens !== null && remainingTokens > 0 && remainingTokens <= LOW_BALANCE;
   const currentPublicLink = queue?.slug ? `${window.location.origin}/${queue.slug}` : '';
+
 
   // ══════════════════════════════════════════════════════════
   // VIEW: DEDICATED LANDING PAGE (/welcome) FOR META ADS
@@ -702,16 +868,8 @@ export default function App() {
   if (currentPage === 'welcome') {
     return (
       <LandingPage
-        onGetStarted={() => {
-          window.history.replaceState({}, '', '/');
-          switchAuthMode('signup');
-          setCurrentPage('admin_login');
-        }}
-        onSignIn={() => {
-          window.history.replaceState({}, '', '/');
-          switchAuthMode('login');
-          setCurrentPage('admin_login');
-        }}
+        onGetStarted={() => goToLogin('signup')}
+        onSignIn={() => goToLogin('login')}
         onGoHome={() => {
           window.history.pushState({}, '', '/');
           setCurrentPage('home');
@@ -728,9 +886,25 @@ export default function App() {
   // VIEW 1: PUBLIC / TV / MOBILE DISPLAY (Airbnb Colorful)
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'status') {
+    const notStarted = activeQueue?.queue_position === 0;
+    const live = displayStatus === 'live';
+    const pillButton = {
+      background: '#ffffff',
+      color: '#222222',
+      border: '1px solid #fee2e2',
+      padding: '8px 16px',
+      borderRadius: 999,
+      cursor: 'pointer',
+      fontSize: 13,
+      fontWeight: 600,
+      boxShadow: '0 4px 12px rgba(255, 56, 92, 0.08)',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+    };
     return (
-      <div 
-        onClick={playAlertSound}
+      <div
+        onClick={() => { if (!soundOn) handleEnableSound(); }}
         style={{
           minHeight: '100dvh',
           backgroundColor: '#fffdfd',
@@ -744,89 +918,98 @@ export default function App() {
           textAlign: 'center',
           padding: '76px 20px 32px',
           position: 'relative',
-          boxSizing: 'border-box'
+          boxSizing: 'border-box',
+          width: '100%'
         }}
       >
-        {/* Top Floating Pill Button */}
-        <button
-          onClick={async () => {
-            window.history.replaceState({}, '', '/');
-            if (session) {
-              setCurrentPage('admin_dash');
-              await fetchAdminData(session.user.id);
-            } else {
-              setCurrentPage('home');
-            }
-          }}
-          style={{
-            position: 'absolute',
-            top: 20,
-            left: 20,
-            background: '#ffffff',
-            color: '#222222',
-            border: '1px solid #fee2e2',
-            padding: '8px 16px',
-            borderRadius: 999,
-            cursor: 'pointer',
-            fontSize: 13,
-            fontWeight: 600,
-            boxShadow: '0 4px 12px rgba(255, 56, 92, 0.08)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            zIndex: 10
-          }}
-        >
-          {session ? '← Back to Controller' : '← Search Desk'}
-        </button>
+        {/* Top bar: back + full screen */}
+        <div style={{ position: 'absolute', top: 20, left: 20, right: 20, display: 'flex', justifyContent: 'space-between', gap: 10, zIndex: 10 }}>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              window.history.replaceState({}, '', '/');
+              setLookupError('');
+              if (session) {
+                setCurrentPage('admin_dash');
+                loadDesk(session.user.id, { silent: true });
+              } else {
+                setCurrentPage('home');
+              }
+            }}
+            style={pillButton}
+          >
+            {session ? '← Back to Controller' : '← Search Desk'}
+          </button>
+          {activeQueue && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+              style={pillButton}
+              aria-label="Toggle full screen"
+            >
+              Full screen
+            </button>
+          )}
+        </div>
 
         {activeQueue ? (
-          <div style={{ maxWidth: 520, width: '100%', margin: '0 auto' }}>
-            
+          <div style={{ maxWidth: 'min(92vw, 1100px)', width: '100%', margin: '0 auto' }}>
+
             {/* Dynamic Status Pill */}
-            <div style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '7px 16px',
-              borderRadius: 999,
-              background: activeQueue.queue_position === 0 ? '#f1f5f9' : '#fff1f2',
-              border: activeQueue.queue_position === 0 ? '1px solid #e2e8f0' : '1px solid #fecdd3',
-              color: activeQueue.queue_position === 0 ? '#64748b' : '#FF385C',
-              fontSize: 11,
-              fontWeight: 800,
-              letterSpacing: 1.2,
-              textTransform: 'uppercase',
-              marginBottom: 16,
-              boxShadow: activeQueue.queue_position === 0 ? '0 2px 6px rgba(0,0,0,0.04)' : '0 2px 10px rgba(255, 56, 92, 0.1)'
-            }}>
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '7px 16px',
+                borderRadius: 999,
+                background: !live ? '#fffbeb' : notStarted ? '#f1f5f9' : '#fff1f2',
+                border: !live ? '1px solid #fde68a' : notStarted ? '1px solid #e2e8f0' : '1px solid #fecdd3',
+                color: !live ? '#92400e' : notStarted ? '#475569' : '#C8093A',
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: 1.2,
+                textTransform: 'uppercase',
+                marginBottom: 16,
+                boxShadow: '0 2px 10px rgba(255, 56, 92, 0.08)'
+              }}
+            >
               <span style={{
                 width: 8,
                 height: 8,
                 borderRadius: '50%',
-                backgroundColor: activeQueue.queue_position === 0 ? '#94a3b8' : '#FF385C',
+                backgroundColor: !live ? '#f59e0b' : notStarted ? '#94a3b8' : '#FF385C',
                 display: 'inline-block',
-                boxShadow: activeQueue.queue_position === 0 ? '0 0 0 4px rgba(148, 163, 184, 0.25)' : '0 0 0 4px rgba(255, 56, 92, 0.25)'
+                boxShadow: !live ? '0 0 0 4px rgba(245, 158, 11, 0.25)' : notStarted ? '0 0 0 4px rgba(148, 163, 184, 0.25)' : '0 0 0 4px rgba(255, 56, 92, 0.25)'
               }} />
-              {activeQueue.queue_position === 0 ? 'Queue Not Started' : 'Live Calling'}
+              {displayStatus === 'reconnecting'
+                ? 'Reconnecting… number may be out of date'
+                : displayStatus === 'connecting'
+                  ? 'Connecting…'
+                  : notStarted ? 'Queue Not Started' : 'Live Calling'}
             </div>
 
             {/* Header Titles */}
             <h1 style={{
-              fontSize: 'clamp(1.9rem, 6vw, 3.2rem)',
+              fontSize: 'clamp(1.9rem, 5vw, 4rem)',
               fontWeight: 800,
               margin: '0 0 6px',
               letterSpacing: '-0.03em',
               color: '#222222',
-              lineHeight: 1.2
+              lineHeight: 1.2,
+              overflowWrap: 'anywhere'
             }}>
               {activeQueue.queue_title}
             </h1>
             <p style={{
-              fontSize: 'clamp(1rem, 3.5vw, 1.25rem)',
-              color: '#FF385C',
+              fontSize: 'clamp(1rem, 2.6vw, 1.6rem)',
+              color: '#C8093A',
               margin: '0 0 28px',
-              fontWeight: 600
+              fontWeight: 600,
+              overflowWrap: 'anywhere'
             }}>
               {activeQueue.queue_subtitle}
             </p>
@@ -836,48 +1019,58 @@ export default function App() {
               background: '#ffffff',
               border: '1.5px solid #ffe4e6',
               borderRadius: 32,
-              padding: 'clamp(32px, 7vw, 48px) 20px',
+              padding: 'clamp(32px, 6vh, 64px) 20px',
               boxShadow: '0 20px 48px -8px rgba(255, 56, 92, 0.12), 0 8px 24px -4px rgba(0, 0, 0, 0.04)',
               margin: '0 auto',
+              maxWidth: 'min(100%, 760px)',
               position: 'relative'
             }}>
               <span style={{
-                fontSize: 12,
+                fontSize: 'clamp(12px, 1.4vw, 18px)',
                 letterSpacing: 3,
                 textTransform: 'uppercase',
-                color: '#94a3b8',
+                color: '#64748b',
                 fontWeight: 800,
                 display: 'block'
               }}>
                 Now Serving
               </span>
-              
+
               {/* Vibrant Airbnb Gradient Number */}
-              <div style={{
-                fontSize: 'clamp(7rem, 30vw, 13.5rem)',
-                fontWeight: 900,
-                lineHeight: 1.05,
-                margin: '8px 0 0',
-                letterSpacing: '-0.04em',
-                background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 55%, #D70466 100%)',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent'
-              }}>
-                {activeQueue.queue_position === 0 ? '—' : activeQueue.queue_position}
+              <div
+                aria-live="assertive"
+                style={{
+                  fontSize: 'clamp(7rem, min(30vw, 42vh), 26rem)',
+                  fontWeight: 900,
+                  lineHeight: 1.05,
+                  margin: '8px 0 0',
+                  letterSpacing: '-0.04em',
+                  fontVariantNumeric: 'tabular-nums',
+                  background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 55%, #D70466 100%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent'
+                }}
+              >
+                {notStarted ? '—' : activeQueue.queue_position}
               </div>
             </div>
 
-            {/* Footer Prompt */}
-            <p style={{
-              color: '#94a3b8',
-              marginTop: 24,
-              fontSize: 12,
-              fontWeight: 500,
-              lineHeight: 1.4,
-              padding: '0 10px'
-            }}>
-              Tap anywhere once for sound chimes • Syncs in real-time
-            </p>
+            {/* Footer: sound control */}
+            <div style={{ marginTop: 24, display: 'flex', justifyContent: 'center' }}>
+              {soundOn ? (
+                <span style={{ color: '#64748b', fontSize: 13, fontWeight: 600 }}>
+                  Sound on – a chime plays when the number changes
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); handleEnableSound(); }}
+                  style={{ ...pillButton, color: '#C8093A', fontSize: 14 }}
+                >
+                  Tap to turn on sound
+                </button>
+              )}
+            </div>
 
           </div>
         ) : (
@@ -890,17 +1083,19 @@ export default function App() {
             border: '1px solid #fee2e2',
             boxShadow: '0 12px 36px rgba(255, 56, 92, 0.08)'
           }}>
-            <p style={{ color: '#c13515', fontSize: 15, fontWeight: 600, margin: '0 0 16px' }}>
+            <p style={{ color: lookupError ? '#b42318' : '#475569', fontSize: 15, fontWeight: 600, margin: '0 0 16px' }}>
               {lookupError || 'Loading live display...'}
             </p>
             {lookupError && (
               <button
+                type="button"
                 onClick={() => {
                   window.history.replaceState({}, '', '/');
+                  setLookupError('');
                   setCurrentPage('home');
                 }}
                 style={{
-                  background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                  background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)',
                   color: '#ffffff',
                   border: 'none',
                   padding: '12px 24px',
@@ -945,9 +1140,9 @@ export default function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {session ? (
               <button
-                onClick={async () => {
+                onClick={() => {
                   setCurrentPage('admin_dash');
-                  await fetchAdminData(session.user.id);
+                  loadDesk(session.user.id, { silent: true });
                 }}
                 style={{ background: '#222222', color: '#ffffff', border: 'none', padding: '10px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
               >
@@ -955,10 +1150,7 @@ export default function App() {
               </button>
             ) : (
               <button
-                onClick={() => {
-                  switchAuthMode('login');
-                  setCurrentPage('admin_login');
-                }}
+                onClick={() => goToLogin('login')}
                 style={{ background: 'transparent', color: '#222222', border: '1px solid #dddddd', padding: '9px 16px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
               >
                 Sign In / Sign Up
@@ -992,9 +1184,14 @@ export default function App() {
               }}
             >
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                <span style={{ color: '#94a3b8', fontSize: 18, fontWeight: 500, marginRight: 2, userSelect: 'none' }}>/</span>
+                <span style={{ color: '#64748b', fontSize: 18, fontWeight: 500, marginRight: 2, userSelect: 'none' }}>/</span>
                 <input
+                  id="queue-search"
                   type="text"
+                  aria-label="Queue link name"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  maxLength={200}
                   required
                   placeholder="dr-adam or room-1"
                   value={inputQuery}
@@ -1006,7 +1203,7 @@ export default function App() {
               <button
                 type="submit"
                 style={{
-                  background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                  background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)',
                   color: '#ffffff',
                   border: 'none',
                   borderRadius: 999,
@@ -1132,7 +1329,7 @@ export default function App() {
                 window.history.replaceState({}, '', '/');
                 if (session) {
                   setCurrentPage('admin_dash');
-                  await fetchAdminData(session.user.id);
+                  loadDesk(session.user.id, { silent: true });
                 } else {
                   setCurrentPage('home');
                 }
@@ -1155,7 +1352,7 @@ export default function App() {
               borderRadius: 999,
               background: '#fff1f2',
               border: '1px solid #fecdd3',
-              color: '#FF385C',
+              color: '#C8093A',
               fontSize: 11,
               fontWeight: 800,
               letterSpacing: 1.2,
@@ -1180,7 +1377,7 @@ export default function App() {
               boxShadow: '0 16px 40px -8px rgba(255, 56, 92, 0.12), 0 4px 16px rgba(0,0,0,0.04)',
               textAlign: 'center'
             }}>
-              <div style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 1.5, color: '#94a3b8', fontWeight: 800 }}>
+              <div style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 1.5, color: '#64748b', fontWeight: 800 }}>
                 Direct WhatsApp Support
               </div>
               
@@ -1214,7 +1411,7 @@ export default function App() {
               </a>
             </div>
 
-            <div style={{ marginTop: 28, fontSize: 13, color: '#94a3b8' }}>
+            <div style={{ marginTop: 28, fontSize: 13, color: '#64748b' }}>
               Typically replies within minutes • Monday to Sunday
             </div>
 
@@ -1410,13 +1607,22 @@ export default function App() {
             </div>
           )}
 
+          {authSuccess && (
+            <div role="status" style={{ backgroundColor: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 16 }}>
+              {authSuccess}
+            </div>
+          )}
+
           <form onSubmit={handleUpdatePassword}>
             <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
-              <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>New Password</label>
+              <label htmlFor="new-password" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>New Password</label>
               <input
+                id="new-password"
                 type="password"
+                autoComplete="new-password"
+                minLength={8}
                 required
-                placeholder="At least 6 characters"
+                placeholder="At least 8 characters"
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
                 style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
@@ -1429,7 +1635,7 @@ export default function App() {
               style={{
                 width: '100%',
                 padding: 14,
-                background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)',
                 color: '#fff',
                 border: 'none',
                 borderRadius: 12,
@@ -1455,8 +1661,11 @@ export default function App() {
         <div style={{ maxWidth: 420, width: '100%', maxHeight: '90vh', overflowY: 'auto', backgroundColor: '#ffffff', borderRadius: 24, boxShadow: '0 12px 36px rgba(0,0,0,0.08)', border: '1px solid #ebebeb' }}>
           <div style={{ display: 'flex', alignItems: 'center', padding: '18px 20px', borderBottom: '1px solid #ebebeb' }}>
             <button
+              type="button"
+              aria-label="Close sign-in"
               onClick={() => {
                 switchAuthMode('login');
+                window.history.pushState({}, '', '/');
                 setCurrentPage('home');
               }}
               style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center' }}
@@ -1512,7 +1721,7 @@ export default function App() {
             )}
 
             {authError && (
-              <div style={{ backgroundColor: '#fff8f6', color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 18 }}>
+              <div role="alert" style={{ backgroundColor: '#fff8f6', color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 18 }}>
                 {authError}
               </div>
             )}
@@ -1530,8 +1739,10 @@ export default function App() {
 
                 <form onSubmit={handleLogin}>
                   <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
-                    <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Email Address</label>
+                    <label htmlFor="login-email" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Email Address</label>
                     <input
+                      id="login-email"
+                      autoComplete="email"
                       type="email"
                       required
                       placeholder="name@example.com"
@@ -1542,8 +1753,10 @@ export default function App() {
                   </div>
 
                   <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 12 }}>
-                    <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Password</label>
+                    <label htmlFor="login-password" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Password</label>
                     <input
+                      id="login-password"
+                      autoComplete="current-password"
                       type="password"
                       required
                       placeholder="••••••••"
@@ -1557,7 +1770,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => switchAuthMode('forgot')}
-                      style={{ background: 'none', border: 'none', color: '#FF385C', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                      style={{ background: 'none', border: 'none', color: '#C8093A', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}
                     >
                       Forgot password?
                     </button>
@@ -1569,7 +1782,7 @@ export default function App() {
                     style={{
                       width: '100%',
                       padding: 14,
-                      background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                      background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)',
                       color: '#fff',
                       border: 'none',
                       borderRadius: 12,
@@ -1587,7 +1800,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => switchAuthMode('signup')}
-                    style={{ background: 'none', border: 'none', color: '#FF385C', fontWeight: 700, cursor: 'pointer', padding: 0 }}
+                    style={{ background: 'none', border: 'none', color: '#C8093A', fontWeight: 700, cursor: 'pointer', padding: 0 }}
                   >
                     Sign Up
                   </button>
@@ -1604,10 +1817,13 @@ export default function App() {
 
                     <form onSubmit={handleSignUp}>
                       <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
-                        <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                          Full Name <span style={{ color: '#FF385C' }}>*</span>
+                        <label htmlFor="signup-name" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
+                          Full Name <span style={{ color: '#C8093A' }}>*</span>
                         </label>
                         <input
+                          id="signup-name"
+                          autoComplete="name"
+                          maxLength={80}
                           type="text"
                           required
                           placeholder="Dr. Adam or Clinic Host"
@@ -1618,10 +1834,12 @@ export default function App() {
                       </div>
 
                       <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
-                        <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                          Email Address <span style={{ color: '#FF385C' }}>*</span>
+                        <label htmlFor="signup-email" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
+                          Email Address <span style={{ color: '#C8093A' }}>*</span>
                         </label>
                         <input
+                          id="signup-email"
+                          autoComplete="email"
                           type="email"
                           required
                           placeholder="name@example.com"
@@ -1632,13 +1850,16 @@ export default function App() {
                       </div>
 
                       <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
-                        <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                          Password <span style={{ color: '#FF385C' }}>*</span>
+                        <label htmlFor="signup-password" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
+                          Password <span style={{ color: '#C8093A' }}>*</span>
                         </label>
                         <input
+                          id="signup-password"
+                          autoComplete="new-password"
+                          minLength={8}
                           type="password"
                           required
-                          placeholder="At least 6 characters"
+                          placeholder="At least 8 characters"
                           value={password}
                           onChange={e => setPassword(e.target.value)}
                           style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
@@ -1646,10 +1867,12 @@ export default function App() {
                       </div>
 
                       <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 18 }}>
-                        <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                          Confirm Password <span style={{ color: '#FF385C' }}>*</span>
+                        <label htmlFor="signup-confirm" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
+                          Confirm Password <span style={{ color: '#C8093A' }}>*</span>
                         </label>
                         <input
+                          id="signup-confirm"
+                          autoComplete="new-password"
                           type="password"
                           required
                           placeholder="Repeat password"
@@ -1665,7 +1888,7 @@ export default function App() {
                         style={{
                           width: '100%',
                           padding: 14,
-                          background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
+                          background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)',
                           color: '#fff',
                           border: 'none',
                           borderRadius: 12,
@@ -1683,7 +1906,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => switchAuthMode('login')}
-                        style={{ background: 'none', border: 'none', color: '#FF385C', fontWeight: 700, cursor: 'pointer', padding: 0 }}
+                        style={{ background: 'none', border: 'none', color: '#C8093A', fontWeight: 700, cursor: 'pointer', padding: 0 }}
                       >
                         Sign In
                       </button>
@@ -1697,18 +1920,18 @@ export default function App() {
                         <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
                       </svg>
                     </div>
-                    <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>Verification Link Sent</h2>
+                    <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>Check Your Inbox</h2>
                     <p style={{ color: '#717171', fontSize: 13, margin: '0 0 18px', lineHeight: 1.5 }}>
-                      We sent an activation link to:<br />
+                      If this email isn’t registered yet, we’ve sent an activation link to:<br />
                       <strong style={{ color: '#222222' }}>{email}</strong>
                     </p>
                     <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 14, padding: 14, fontSize: 13, color: '#475569', lineHeight: 1.5, textAlign: 'left', marginBottom: 20 }}>
-                      💡 <strong>Next step:</strong> Click the confirmation link in your inbox. Once confirmed, return here and sign in with your email and password.
+                      💡 <strong>Next step:</strong> Click the confirmation link in your inbox, then come back and sign in. Already have an account? Sign in, or use “Forgot password?”.
                     </div>
                     <button
                       type="button"
                       onClick={() => switchAuthMode('login')}
-                      style={{ width: '100%', padding: 13, background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: 'pointer', marginBottom: 12 }}
+                      style={{ width: '100%', padding: 13, background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: 'pointer', marginBottom: 12 }}
                     >
                       Go to Sign In
                     </button>
@@ -1734,8 +1957,10 @@ export default function App() {
 
                     <form onSubmit={handleForgotPassword}>
                       <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 18 }}>
-                        <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Registered Email</label>
+                        <label htmlFor="forgot-email" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Registered Email</label>
                         <input
+                          id="forgot-email"
+                          autoComplete="email"
                           type="email"
                           required
                           placeholder="name@example.com"
@@ -1748,7 +1973,7 @@ export default function App() {
                       <button
                         type="submit"
                         disabled={loading}
-                        style={{ width: '100%', padding: 14, background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: 'pointer', marginBottom: 16 }}
+                        style={{ width: '100%', padding: 14, background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: 'pointer', marginBottom: 16 }}
                       >
                         {loading ? 'Sending link...' : 'Send Reset Link'}
                       </button>
@@ -1763,7 +1988,7 @@ export default function App() {
                     </div>
                     <h2 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>Reset Link Sent</h2>
                     <p style={{ color: '#717171', fontSize: 13, lineHeight: 1.5, margin: '0 0 18px' }}>
-                      We sent a reset link to <strong>{email}</strong>.
+                      If <strong>{email}</strong> has a LiveQueue account, a reset link is on its way.
                     </p>
                   </div>
                 )}
@@ -1788,14 +2013,24 @@ export default function App() {
   // ══════════════════════════════════════════════════════════
   // VIEW 5: ADMIN CONTROLLER DASHBOARD
   // ══════════════════════════════════════════════════════════
+  const deskReady = !!(session && queue && queue.admin_id === session.user.id);
+  const primaryGradient = 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)';
+  const fieldLabel = { fontSize: 12, fontWeight: 700, color: '#595959', display: 'block', marginBottom: 4 };
+  const fieldInput = { width: '100%', padding: '10px 12px', boxSizing: 'border-box', border: '1px solid #b0b0b0', borderRadius: 10, fontSize: 14, background: '#ffffff', color: '#222222' };
+  const noticeColors = {
+    info: { bg: '#eff6ff', fg: '#1e40af', border: '#bfdbfe' },
+    success: { bg: '#f0fdf4', fg: '#166534', border: '#bbf7d0' },
+    error: { bg: '#fff8f6', fg: '#b42318', border: '#fecaca' },
+  };
+
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', padding: '0 16px 60px' }}>
-      
+    <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', padding: '0 16px 60px', width: '100%', boxSizing: 'border-box' }}>
+
       {/* Host Bar */}
       <header style={{ maxWidth: 520, margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 72, borderBottom: '1px solid #ebebeb' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ width: 24, height: 24, borderRadius: 6, background: '#FF385C', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <div style={{ width: 24, height: 24, borderRadius: 6, background: '#E00B41', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <rect x="3" y="4" width="18" height="16" rx="2" />
             </svg>
           </div>
@@ -1803,382 +2038,453 @@ export default function App() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button
+            type="button"
             onClick={() => {
               window.history.pushState({}, '', '/contact');
               setCurrentPage('contact');
             }}
-            style={{ background: 'transparent', border: 'none', color: '#717171', padding: '7px 8px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
+            style={{ background: 'transparent', border: 'none', color: '#595959', padding: '7px 8px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
           >
             Contact
           </button>
           <button
+            type="button"
             onClick={() => {
-              window.history.replaceState({}, '', '/');
+              window.history.pushState({}, '', '/');
               setCurrentPage('home');
             }}
             style={{ background: '#ffffff', border: '1px solid #dddddd', padding: '7px 13px', borderRadius: 999, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
           >
             Home
           </button>
-          <button
-            onClick={async () => {
-              await supabase.auth.signOut();
-              switchAuthMode('login');
-              setCurrentPage('home');
-            }}
-            style={{ background: 'transparent', border: 'none', color: '#717171', padding: '7px 8px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
-          >
-            Log out
-          </button>
+          {session && (
+            <button
+              type="button"
+              onClick={handleLogout}
+              style={{ background: 'transparent', border: 'none', color: '#595959', padding: '7px 8px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
+            >
+              Log out
+            </button>
+          )}
         </div>
       </header>
 
       <div style={{ maxWidth: 480, margin: '20px auto 0' }}>
 
-        {/* Logged-in Host Profile Bar */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          backgroundColor: '#ffffff',
-          borderRadius: 14,
-          padding: '8px 14px',
-          border: '1px solid #ebebeb',
-          boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
-          marginBottom: 12,
-          fontSize: 11
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden' }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#10b981', flexShrink: 0 }} />
-            <span style={{ fontWeight: 700, color: '#222222', whiteSpace: 'nowrap' }}>
-              {session?.user?.user_metadata?.name || 'Host'}
-            </span>
-            <span style={{ color: '#d1d5db' }}>•</span>
-            <span style={{ color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {session?.user?.email}
-            </span>
-          </div>
-
-          <div 
-            title={`Full ID: ${session?.user?.id || ''}`}
-            style={{
-              fontSize: 10,
-              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-              color: '#9ca3af',
-              backgroundColor: '#f8fafc',
-              border: '1px solid #e2e8f0',
-              padding: '2px 6px',
-              borderRadius: 6,
-              flexShrink: 0,
-              marginLeft: 8,
-              cursor: 'default'
-            }}
-          >
-            ID: {session?.user?.id ? `${session.user.id.slice(0, 8)}...` : ''}
-          </div>
-        </div>
-        
-        {/* Token Balance Widget */}
-        <div style={{
-          backgroundColor: '#ffffff',
-          borderRadius: 20,
-          padding: '16px 20px',
-          border: '1px solid #ebebeb',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.04)',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 16
-        }}>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: '#222222' }}>Remaining Balance</div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{
-              fontSize: 18,
-              fontWeight: 800,
-              color: remainingTokens === null ? '#94a3b8' : remainingTokens <= 100 ? '#c13515' : '#008a05',
-              backgroundColor: remainingTokens === null ? '#f1f5f9' : remainingTokens <= 100 ? '#fff8f6' : '#f0fdf4',
-              padding: '6px 12px',
-              borderRadius: 999,
-              minWidth: 44,
-              textAlign: 'center'
-            }}>
-              {remainingTokens !== null ? remainingTokens : '...'}
-            </div>
+        {!session && (
+          <div style={{ backgroundColor: '#ffffff', borderRadius: 24, padding: '40px 20px', border: '1px solid #ebebeb', textAlign: 'center' }}>
+            <p style={{ margin: '0 0 16px', color: '#475569', fontSize: 15 }}>You’re signed out. Sign in to manage your desk.</p>
             <button
-              onClick={() => setIsRechargeOpen(true)}
-              style={{
-                background: 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
-                color: '#ffffff',
-                border: 'none',
-                padding: '8px 14px',
-                borderRadius: 999,
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                boxShadow: '0 2px 8px rgba(255, 56, 92, 0.25)'
-              }}
+              type="button"
+              onClick={() => goToLogin('login')}
+              style={{ background: primaryGradient, color: '#ffffff', border: 'none', padding: '12px 24px', borderRadius: 999, fontWeight: 700, cursor: 'pointer' }}
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19"></line>
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-              Recharge
+              Sign In
             </button>
           </div>
-        </div>
-
-        {adminError && (
-          <div style={{ backgroundColor: '#fff8f6', color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 14, fontSize: 13, marginBottom: 16 }}>
-            {adminError}
-          </div>
         )}
 
-        {!queue && !adminError && (
-          <div style={{
-            backgroundColor: '#ffffff',
-            borderRadius: 24,
-            padding: '48px 20px',
-            border: '1px solid #ebebeb',
-            textAlign: 'center',
-            color: '#94a3b8',
-            fontSize: 14,
-            fontWeight: 500,
-            marginBottom: 16
-          }}>
-            Connecting to counter...
-          </div>
-        )}
+        {session && (
+          <>
+            {/* Logged-in Host Profile Bar */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              backgroundColor: '#ffffff',
+              borderRadius: 14,
+              padding: '8px 14px',
+              border: '1px solid #ebebeb',
+              boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
+              marginBottom: 12,
+              fontSize: 11
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden' }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#10b981', flexShrink: 0 }} />
+                <span style={{ fontWeight: 700, color: '#222222', whiteSpace: 'nowrap' }}>
+                  {session.user?.user_metadata?.name || 'Host'}
+                </span>
+                <span style={{ color: '#d1d5db' }}>•</span>
+                <span style={{ color: '#595959', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {session.user?.email}
+                </span>
+              </div>
 
-        {/* Counter Action Card */}
-        {queue && (
-          <div style={{
-            backgroundColor: '#ffffff',
-            borderRadius: 24,
-            padding: '28px 20px',
-            border: '1px solid #ebebeb',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.06)',
-            textAlign: 'center',
-            marginBottom: 16
-          }}>
-            {isEditing ? (
-              <form onSubmit={saveDetails} style={{ textAlign: 'left', marginBottom: 20 }}>
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: '#717171', display: 'block', marginBottom: 4 }}>Counter Name</label>
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={e => setEditTitle(e.target.value)}
-                    style={{ width: '100%', padding: '10px 12px', boxSizing: 'border-box', border: '1px solid #b0b0b0', borderRadius: 10, fontSize: 14, background: '#ffffff', color: '#222222' }}
-                  />
-                </div>
+              <div
+                title={`Full ID: ${session.user?.id || ''}`}
+                style={{
+                  fontSize: 10,
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                  color: '#64748b',
+                  backgroundColor: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  padding: '2px 6px',
+                  borderRadius: 6,
+                  flexShrink: 0,
+                  marginLeft: 8,
+                  cursor: 'default'
+                }}
+              >
+                ID: {session.user?.id ? `${session.user.id.slice(0, 8)}...` : ''}
+              </div>
+            </div>
 
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: '#717171', display: 'block', marginBottom: 4 }}>Subtitle / Room</label>
-                  <input
-                    type="text"
-                    value={editSubtitle}
-                    onChange={e => setEditSubtitle(e.target.value)}
-                    style={{ width: '100%', padding: '10px 12px', boxSizing: 'border-box', border: '1px solid #b0b0b0', borderRadius: 10, fontSize: 14, background: '#ffffff', color: '#222222' }}
-                  />
-                </div>
-
-                <div style={{ marginBottom: 16 }}>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: '#717171', display: 'block', marginBottom: 4 }}>Custom URL Slug</label>
-                  <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #b0b0b0', borderRadius: 10, padding: '0 12px' }}>
-                    <span style={{ color: '#717171', fontSize: 14 }}>/</span>
-                    <input
-                      type="text"
-                      value={editSlug}
-                      onChange={e => setEditSlug(e.target.value)}
-                      style={{ flex: 1, border: 'none', outline: 'none', padding: '10px 6px', fontSize: 14, background: '#ffffff', color: '#222222' }}
-                    />
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    type="submit"
-                    style={{ flex: 1, padding: 11, background: '#222222', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer' }}
-                  >
-                    Save Changes
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsEditing(false)}
-                    style={{ padding: '11px 18px', background: '#f7f7f7', border: '1px solid #dddddd', borderRadius: 10, fontWeight: 600, cursor: 'pointer' }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <div style={{ marginBottom: 18 }}>
-                <h2 style={{ fontSize: 24, fontWeight: 800, margin: '0 0 4px', letterSpacing: '-0.02em', color: '#222222' }}>
-                  {queue.queue_title}
-                </h2>
-                <div style={{ color: '#717171', fontSize: 14, marginBottom: 8 }}>
-                  {queue.queue_subtitle}
+            {/* Token Balance Widget */}
+            <div style={{
+              backgroundColor: '#ffffff',
+              borderRadius: 20,
+              padding: '16px 20px',
+              border: '1px solid #ebebeb',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.04)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 16
+            }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#222222' }}>Remaining Calls</div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{
+                  fontSize: 18,
+                  fontWeight: 800,
+                  fontVariantNumeric: 'tabular-nums',
+                  color: !deskReady || remainingTokens === null ? '#64748b' : remainingTokens <= 100 ? '#b42318' : '#067a0b',
+                  backgroundColor: !deskReady || remainingTokens === null ? '#f1f5f9' : remainingTokens <= 100 ? '#fff8f6' : '#f0fdf4',
+                  padding: '6px 12px',
+                  borderRadius: 999,
+                  minWidth: 44,
+                  textAlign: 'center'
+                }}>
+                  {deskReady && remainingTokens !== null ? remainingTokens.toLocaleString('en-IN') : '...'}
                 </div>
                 <button
-                  onClick={() => setIsEditing(true)}
-                  style={{ background: 'none', border: 'none', color: '#FF385C', fontSize: 13, fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}
+                  type="button"
+                  onClick={openRecharge}
+                  disabled={!deskReady}
+                  style={{
+                    background: primaryGradient,
+                    color: '#ffffff',
+                    border: 'none',
+                    padding: '8px 14px',
+                    borderRadius: 999,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: deskReady ? 'pointer' : 'not-allowed',
+                    opacity: deskReady ? 1 : 0.6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    boxShadow: '0 2px 8px rgba(255, 56, 92, 0.25)'
+                  }}
                 >
-                  Edit details & slug
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                  Recharge
+                </button>
+              </div>
+            </div>
+
+            {/* Low balance warning */}
+            {deskReady && isLowBalance && !isAccountBlocked && (
+              <div role="status" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, backgroundColor: '#fffbeb', color: '#92400e', border: '1px solid #fde68a', padding: '12px 16px', borderRadius: 14, fontSize: 13, marginBottom: 16 }}>
+                <span>Only <strong>{remainingTokens}</strong> calls left. Recharge now so your desk doesn’t stop mid-clinic.</span>
+                <button type="button" onClick={openRecharge} style={{ background: '#92400e', color: '#ffffff', border: 'none', borderRadius: 999, padding: '6px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}>
+                  Recharge
                 </button>
               </div>
             )}
 
-            {/* Token Big Number Display */}
-            <div style={{ padding: '20px 0', borderTop: '1px solid #f0f0f0', borderBottom: '1px solid #f0f0f0', margin: '14px 0 20px' }}>
-              <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, textTransform: 'uppercase', color: '#717171' }}>
-                Current Token
-              </span>
-              <div style={{ fontSize: '5rem', fontWeight: 900, lineHeight: 1.1, margin: '6px 0 0', color: '#222222', letterSpacing: '-0.03em' }}>
-                {queue.queue_position === 0 ? '—' : queue.queue_position}
+            {deskReady && isAccountBlocked && (
+              <div role="alert" style={{ backgroundColor: '#fff8f6', color: '#b42318', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 14, fontSize: 13, marginBottom: 16 }}>
+                This account is paused, so calling is turned off. Please contact LiveQueue support on WhatsApp.
               </div>
-            </div>
+            )}
 
-            {/* Calling Actions */}
-            <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
-              <button
-                onClick={previousQueue}
-                disabled={!queue || queue.queue_position <= 0}
-                style={{
-                  flex: 1,
-                  padding: 15,
-                  fontSize: 15,
-                  fontWeight: 600,
-                  backgroundColor: !queue || queue.queue_position <= 0 ? '#f7f7f7' : '#ffffff',
-                  color: !queue || queue.queue_position <= 0 ? '#c7c7c7' : '#222222',
-                  border: '1px solid #dddddd',
-                  borderRadius: 14,
-                  cursor: !queue || queue.queue_position <= 0 ? 'not-allowed' : 'pointer'
-                }}
-              >
-                -1 Previous
-              </button>
+            {adminError && (
+              <div role="alert" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, backgroundColor: '#fff8f6', color: '#b42318', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 14, fontSize: 13, marginBottom: 16 }}>
+                <span>{adminError}</span>
+                {deskFailed && (
+                  <button type="button" onClick={() => loadDesk(session.user.id)} style={{ background: '#b42318', color: '#ffffff', border: 'none', borderRadius: 999, padding: '6px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}>
+                    Retry
+                  </button>
+                )}
+              </div>
+            )}
 
-              <button
-                onClick={advanceQueue}
-                disabled={isBlocked}
-                style={{
-                  flex: 2,
-                  padding: 15,
-                  fontSize: 16,
-                  fontWeight: 700,
-                  background: isBlocked ? '#e2e8f0' : 'linear-gradient(90deg, #FF385C 0%, #E00B41 100%)',
-                  color: isBlocked ? '#94a3b8' : '#ffffff',
-                  border: 'none',
-                  borderRadius: 14,
-                  cursor: isBlocked ? 'not-allowed' : 'pointer',
-                  boxShadow: isBlocked ? 'none' : '0 4px 14px rgba(255, 56, 92, 0.3)'
-                }}
-              >
-                {isBlocked ? 'Quota Exhausted' : '+1 Next Token'}
-              </button>
-            </div>
+            {!deskReady && !deskFailed && (
+              <div style={{
+                backgroundColor: '#ffffff',
+                borderRadius: 24,
+                padding: '48px 20px',
+                border: '1px solid #ebebeb',
+                textAlign: 'center',
+                color: '#64748b',
+                fontSize: 14,
+                fontWeight: 500,
+                marginBottom: 16
+              }}>
+                Loading your desk…
+              </div>
+            )}
 
-            <button
-              onClick={resetQueue}
-              style={{ background: 'none', border: 'none', color: '#717171', fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}
-            >
-              Reset count back to 0
-            </button>
-          </div>
-        )}
+            {/* Counter Action Card */}
+            {deskReady && (
+              <div style={{
+                backgroundColor: '#ffffff',
+                borderRadius: 24,
+                padding: '28px 20px',
+                border: '1px solid #ebebeb',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.06)',
+                textAlign: 'center',
+                marginBottom: 16
+              }}>
+                {isEditing ? (
+                  <form onSubmit={saveDetails} style={{ textAlign: 'left', marginBottom: 20 }}>
+                    <div style={{ marginBottom: 12 }}>
+                      <label htmlFor="edit-title" style={fieldLabel}>Counter Name</label>
+                      <input
+                        id="edit-title"
+                        type="text"
+                        required
+                        maxLength={TITLE_MAX}
+                        placeholder="e.g. Dr. Adam"
+                        value={editTitle}
+                        onChange={e => setEditTitle(e.target.value)}
+                        style={fieldInput}
+                      />
+                    </div>
 
-        {/* Public Display Card */}
-        {queue && (
-          <div style={{
-            backgroundColor: '#ffffff',
-            borderRadius: 24,
-            padding: '24px 20px',
-            border: '1px solid #ebebeb',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.04)',
-            textAlign: 'center'
-          }}>
-            <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: '#717171' }}>
-              Public Display Link
-            </span>
-            <div style={{ margin: '6px 0 16px', fontSize: 15, fontWeight: 700 }}>
-              <a href={currentPublicLink} target="_blank" rel="noreferrer" style={{ color: '#FF385C', textDecoration: 'none' }}>
-                {currentPublicLink.replace(/^https?:\/\//, '')}
-              </a>
-            </div>
+                    <div style={{ marginBottom: 12 }}>
+                      <label htmlFor="edit-subtitle" style={fieldLabel}>Subtitle / Room</label>
+                      <input
+                        id="edit-subtitle"
+                        type="text"
+                        maxLength={SUBTITLE_MAX}
+                        placeholder="e.g. Room 2 · General Medicine"
+                        value={editSubtitle}
+                        onChange={e => setEditSubtitle(e.target.value)}
+                        style={fieldInput}
+                      />
+                    </div>
 
-            {/* Render QR code */}
-            <div style={{ display: 'inline-block', padding: 14, backgroundColor: '#ffffff', border: '1px solid #ebebeb', borderRadius: 16, boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }}>
-              <QRCodeSVG id="poster-qr-code" value={currentPublicLink} size={150} fgColor="#222222" level="H" />
-            </div>
+                    <div style={{ marginBottom: 16 }}>
+                      <label htmlFor="edit-slug" style={fieldLabel}>Public Link</label>
+                      <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #b0b0b0', borderRadius: 10, padding: '0 12px' }}>
+                        <span style={{ color: '#595959', fontSize: 14 }}>/</span>
+                        <input
+                          id="edit-slug"
+                          type="text"
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          maxLength={60}
+                          value={editSlug}
+                          onChange={e => setEditSlug(e.target.value)}
+                          style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', padding: '10px 6px', fontSize: 14, background: '#ffffff', color: '#222222' }}
+                        />
+                      </div>
+                      <div style={{ fontSize: 12, color: '#595959', marginTop: 4 }}>
+                        English letters, numbers and hyphens. Will be saved as <strong>/{normalizeSlug(editSlug) || '…'}</strong>
+                      </div>
+                    </div>
 
-            {/* Action Buttons: TV Launch + Print/PDF Download */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
-              <a
-                href={currentPublicLink}
-                target="_blank"
-                rel="noreferrer"
-                style={{
-                  display: 'block',
-                  background: '#222222',
-                  color: '#ffffff',
-                  padding: '12px 20px',
-                  borderRadius: 999,
-                  textDecoration: 'none',
-                  fontSize: 14,
-                  fontWeight: 600
-                }}
-              >
-                Launch TV Display Screen ↗
-              </a>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        type="submit"
+                        style={{ flex: 1, padding: 11, background: '#222222', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer' }}
+                      >
+                        Save Changes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelEditing}
+                        style={{ padding: '11px 18px', background: '#f7f7f7', border: '1px solid #dddddd', borderRadius: 10, fontWeight: 600, cursor: 'pointer' }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div style={{ marginBottom: 18 }}>
+                    <h2 style={{ fontSize: 24, fontWeight: 800, margin: '0 0 4px', letterSpacing: '-0.02em', color: '#222222', overflowWrap: 'anywhere' }}>
+                      {queue.queue_title}
+                    </h2>
+                    <div style={{ color: '#595959', fontSize: 14, marginBottom: 8, overflowWrap: 'anywhere' }}>
+                      {queue.queue_subtitle}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={startEditing}
+                      style={{ background: 'none', border: 'none', color: '#C8093A', fontSize: 13, fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}
+                    >
+                      Edit name & link
+                    </button>
+                  </div>
+                )}
 
-              <button
-                onClick={handlePrintPoster}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                  background: '#fff1f2',
-                  color: '#FF385C',
-                  border: '1.5px solid #fecdd3',
-                  padding: '11px 20px',
-                  borderRadius: 999,
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  boxShadow: '0 2px 6px rgba(255, 56, 92, 0.08)'
-                }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                  <polyline points="7 10 12 15 17 10"></polyline>
-                  <line x1="12" y1="15" x2="12" y2="3"></line>
-                </svg>
-                Download Printable Poster (PDF)
-              </button>
-            </div>
-          </div>
+                {/* Token Big Number Display */}
+                <div style={{ padding: '20px 0', borderTop: '1px solid #f0f0f0', borderBottom: '1px solid #f0f0f0', margin: '14px 0 20px' }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, textTransform: 'uppercase', color: '#595959' }}>
+                    Current Token
+                  </span>
+                  <div aria-live="polite" style={{ fontSize: '5rem', fontWeight: 900, lineHeight: 1.1, margin: '6px 0 0', color: '#222222', letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', opacity: busy ? 0.5 : 1, transition: 'opacity 0.15s' }}>
+                    {queue.queue_position === 0 ? '—' : queue.queue_position}
+                  </div>
+                </div>
+
+                {/* Calling Actions */}
+                <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+                  <button
+                    type="button"
+                    onClick={previousQueue}
+                    disabled={busy || queue.queue_position <= 0 || isAccountBlocked}
+                    title="Go back one token (the call is refunded)"
+                    style={{
+                      flex: 1,
+                      padding: 15,
+                      fontSize: 15,
+                      fontWeight: 600,
+                      backgroundColor: busy || queue.queue_position <= 0 || isAccountBlocked ? '#f7f7f7' : '#ffffff',
+                      color: busy || queue.queue_position <= 0 || isAccountBlocked ? '#a3a3a3' : '#222222',
+                      border: '1px solid #dddddd',
+                      borderRadius: 14,
+                      cursor: busy || queue.queue_position <= 0 || isAccountBlocked ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    -1 Previous
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={isOutOfCalls && !isAccountBlocked ? openRecharge : advanceQueue}
+                    disabled={busy || isAccountBlocked}
+                    style={{
+                      flex: 2,
+                      padding: 15,
+                      fontSize: 16,
+                      fontWeight: 700,
+                      background: isAccountBlocked ? '#e2e8f0' : isOutOfCalls ? '#222222' : primaryGradient,
+                      color: isAccountBlocked ? '#64748b' : '#ffffff',
+                      border: 'none',
+                      borderRadius: 14,
+                      cursor: busy ? 'wait' : isAccountBlocked ? 'not-allowed' : 'pointer',
+                      boxShadow: isBlocked ? 'none' : '0 4px 14px rgba(255, 56, 92, 0.3)',
+                      opacity: busy ? 0.75 : 1
+                    }}
+                  >
+                    {isAccountBlocked ? 'Account Paused' : isOutOfCalls ? 'No calls left · Recharge' : busy ? 'Calling…' : '+1 Next Token'}
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={resetQueue}
+                  disabled={busy || isAccountBlocked}
+                  style={{ background: 'none', border: 'none', color: '#595959', fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}
+                >
+                  Reset count back to 0
+                </button>
+              </div>
+            )}
+
+            {/* Public Display Card */}
+            {deskReady && (
+              <div style={{
+                backgroundColor: '#ffffff',
+                borderRadius: 24,
+                padding: '24px 20px',
+                border: '1px solid #ebebeb',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.04)',
+                textAlign: 'center'
+              }}>
+                <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: '#595959' }}>
+                  Public Display Link
+                </span>
+                <div style={{ margin: '6px 0 16px', fontSize: 15, fontWeight: 700, overflowWrap: 'anywhere' }}>
+                  <a href={currentPublicLink} target="_blank" rel="noreferrer" style={{ color: '#C8093A', textDecoration: 'none' }}>
+                    {currentPublicLink.replace(/^https?:\/\//, '')}
+                  </a>
+                </div>
+
+                {/* Render QR code */}
+                <div style={{ display: 'inline-block', padding: 14, backgroundColor: '#ffffff', border: '1px solid #ebebeb', borderRadius: 16, boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }}>
+                  <QRCodeSVG id="poster-qr-code" value={currentPublicLink} size={150} fgColor="#222222" level="H" />
+                </div>
+
+                {/* Action Buttons: TV Launch + Print/PDF Download */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
+                  <a
+                    href={currentPublicLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      display: 'block',
+                      background: '#222222',
+                      color: '#ffffff',
+                      padding: '12px 20px',
+                      borderRadius: 999,
+                      textDecoration: 'none',
+                      fontSize: 14,
+                      fontWeight: 600
+                    }}
+                  >
+                    Launch TV Display Screen ↗
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={handlePrintPoster}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8,
+                      background: '#fff1f2',
+                      color: '#C8093A',
+                      border: '1.5px solid #fecdd3',
+                      padding: '11px 20px',
+                      borderRadius: 999,
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      boxShadow: '0 2px 6px rgba(255, 56, 92, 0.08)'
+                    }}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="7 10 12 15 17 10"></polyline>
+                      <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    Print Poster / Save as PDF
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
       {/* RECHARGE MODAL */}
       {isRechargeOpen && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.45)',
-          backdropFilter: 'blur(4px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 16,
-          zIndex: 1000
-        }}>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="recharge-title"
+          onKeyDown={(e) => { if (e.key === 'Escape') closeRecharge(); }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.45)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+            zIndex: 1000
+          }}
+        >
           <div style={{
             backgroundColor: '#ffffff',
             borderRadius: 24,
@@ -2191,45 +2497,64 @@ export default function App() {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>
               <div style={{ textAlign: 'left' }}>
-                <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0, color: '#222222', textAlign: 'left' }}>Recharge Quota</h3>
-                <p style={{ fontSize: 12, color: '#717171', margin: '3px 0 0', textAlign: 'left' }}>Select a package to add calls to your balance</p>
+                <h3 id="recharge-title" style={{ fontSize: 18, fontWeight: 800, margin: 0, color: '#222222', textAlign: 'left' }}>Recharge Calls</h3>
+                <p style={{ fontSize: 12, color: '#595959', margin: '3px 0 0', textAlign: 'left' }}>Pick a pack. One call = one “+1 Next Token” tap.</p>
               </div>
               <button
-                onClick={() => !isProcessing && setIsRechargeOpen(false)}
-                style={{ background: 'none', border: 'none', fontSize: 20, color: '#999999', cursor: 'pointer', padding: 4, lineHeight: 1 }}
+                type="button"
+                aria-label="Close recharge"
+                onClick={closeRecharge}
+                disabled={isProcessing}
+                style={{ background: 'none', border: 'none', fontSize: 20, color: '#595959', cursor: isProcessing ? 'not-allowed' : 'pointer', padding: 4, lineHeight: 1 }}
               >
                 ✕
               </button>
             </div>
 
+            {packsError && (
+              <div role="alert" style={{ backgroundColor: '#fff8f6', color: '#b42318', border: '1px solid #fecaca', padding: '10px 14px', borderRadius: 12, fontSize: 13, marginBottom: 12 }}>
+                {packsError}
+              </div>
+            )}
+
+            {!packs && !packsError && (
+              <p style={{ fontSize: 13, color: '#595959', margin: '8px 0' }}>Loading packs…</p>
+            )}
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {TOKEN_PACKS.map(pack => (
-                <div
+              {(packs || []).map(pack => (
+                <button
+                  type="button"
                   key={pack.id}
-                  onClick={() => !isProcessing && handleRecharge(pack)}
+                  onClick={() => handleRecharge(pack)}
+                  disabled={isProcessing}
                   style={{
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
+                    width: '100%',
                     padding: '14px 16px',
                     borderRadius: 16,
                     border: '1.5px solid #ebebeb',
                     backgroundColor: '#fafafa',
                     cursor: isProcessing ? 'wait' : 'pointer',
-                    transition: 'all 0.15s ease'
+                    transition: 'all 0.15s ease',
+                    font: 'inherit',
+                    color: 'inherit',
+                    textAlign: 'left'
                   }}
                 >
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 15, fontWeight: 800, color: '#222222' }}>
-                        {pack.tokens.toLocaleString()} Calls
+                        {pack.tokens.toLocaleString('en-IN')} Calls
                       </span>
                       {pack.tag && (
                         <span style={{
                           fontSize: 10,
                           fontWeight: 700,
                           textTransform: 'uppercase',
-                          color: '#FF385C',
+                          color: '#C8093A',
                           backgroundColor: '#ffeef1',
                           padding: '2px 8px',
                           borderRadius: 999
@@ -2237,24 +2562,30 @@ export default function App() {
                           {pack.tag}
                         </span>
                       )}
-                    </div>
-                    <div style={{ fontSize: 12, color: '#717171', marginTop: 2, textAlign: 'left' }}>
+                    </span>
+                    <span style={{ fontSize: 12, color: '#595959', marginTop: 2, textAlign: 'left' }}>
                       {pack.name} Pack
-                    </div>
-                  </div>
+                    </span>
+                  </span>
 
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: 17, fontWeight: 800, color: '#222222' }}>₹{pack.price}</div>
-                    <div style={{ fontSize: 11, color: '#94a3b8' }}>One-time</div>
-                  </div>
-                </div>
+                  <span style={{ textAlign: 'right' }}>
+                    <span style={{ display: 'block', fontSize: 17, fontWeight: 800, color: '#222222' }}>{formatInr(pack.price_paise)}</span>
+                    <span style={{ display: 'block', fontSize: 11, color: '#64748b' }}>One-time</span>
+                  </span>
+                </button>
               ))}
             </div>
 
-            {isProcessing && (
-              <p style={{ textAlign: 'center', fontSize: 13, color: '#FF385C', fontWeight: 600, marginTop: 14, margin: '14px 0 0' }}>
-                Connecting to Razorpay gateway...
+            {isProcessing && !paymentNotice && (
+              <p style={{ textAlign: 'center', fontSize: 13, color: '#C8093A', fontWeight: 600, margin: '14px 0 0' }}>
+                Connecting to Razorpay…
               </p>
+            )}
+
+            {paymentNotice && (
+              <div role="status" style={{ marginTop: 14, backgroundColor: noticeColors[paymentNotice.type].bg, color: noticeColors[paymentNotice.type].fg, border: `1px solid ${noticeColors[paymentNotice.type].border}`, padding: '10px 14px', borderRadius: 12, fontSize: 13, lineHeight: 1.45 }}>
+                {paymentNotice.text}
+              </div>
             )}
           </div>
         </div>

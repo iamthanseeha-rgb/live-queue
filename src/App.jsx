@@ -2340,7 +2340,7 @@ export default function App() {
                     type="button"
                     onClick={previousQueue}
                     disabled={busy || queue.queue_position <= 0 || isAccountBlocked}
-                    title="Go back one token (the call is refunded)"
+                    title="Go back one token. The call is refunded only if you undo within 2 minutes."
                     style={{
                       flex: 1,
                       padding: 15,

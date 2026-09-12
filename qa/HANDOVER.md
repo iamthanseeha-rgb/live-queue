@@ -2,6 +2,26 @@
 
 Date: 12 Sep 2026 · Companion to the QA report (`qa/LiveQueue-QA-Report.html`)
 
+## Status
+
+- **Step A applied** (server-side calling + payment functions).
+- **New frontend deployed** to livequeue.co.in (commit `d65b6ef`).
+- **Step B applied** – the browser can no longer write balances, account status or
+  token numbers, and anonymous visitors can no longer list every clinic. Verified live:
+  balance write blocked · token-number write blocked · name/link still editable ·
+  empty name rejected · anon cannot list clinics · public display lookup works.
+- **Database emptied** at your request (0 users). A fresh sign-up was smoke-tested end
+  to end and then removed: admin row + 1,500 calls + desk created correctly.
+- **Step C applied** – "Previous" refunds a call only within 2 minutes of making it, and
+  at most 3 in a row. Winding the day's number back to 0 in the evening refunds nothing
+  (verified live: 0 of 20 recovered), so nobody can recycle the same calls the next day.
+- Dead leftovers dropped: `handle_new_admin_signup`, `process_queue_increment`,
+  `handle_queue_token_decrement` (all orphaned, referencing columns that no longer exist).
+  `handle_new_user` (the sign-up trigger) now has a pinned `search_path` and is off the API.
+
+**Left to do: the Razorpay secrets (step 1) and webhook (step 2) below, plus the two
+auth settings in step 6. Recharge will fail until those are in place.**
+
 ## Already done for you (on Supabase, live now)
 
 Step A of the database work is applied to project `live-queue` (fieeaulnwxkunaaeecwa).
@@ -75,17 +95,10 @@ git push           # Vercel deploys from here
    show as **captured** (not "authorized"), and the tokens appear in your balance.
 5. In Supabase → Table editor → `payments`, the row should say `status = paid`.
 
-### 5. Tell me when step 4 passes – then I run Step B
+### 5. Step B – done
 
-`supabase/migrations/20260912_step_b_lock_down.sql` is the one that actually **takes away**
-the browser's power:
-
-- hosts can no longer write their own balance, status or token number (only name and link);
-- anonymous visitors can no longer list every clinic on the platform;
-- name/link limits are enforced by the database as well as the form.
-
-It must run **after** the new website is live, because the current one still writes
-directly to those tables. I can apply it for you in one step.
+`supabase/migrations/20260912_step_b_lock_down.sql` was applied after your deploy went
+live. Nothing left for you here.
 
 ### 6. Two Supabase settings to switch on yourself
 
@@ -95,12 +108,8 @@ Authentication → Sign In / Providers → Email:
 
 ## Still open
 
-- **Duplicate desks.** 3 of your 4 accounts have 2 desk rows each, from the old
-  double-creation bug (`dr-adam` + `counter-2`, `dradam` + `e2`, `desk-6250` + `desk-6102`).
-  New accounts can't do this any more. I did not delete anything, because in each pair the
-  *second* desk has the higher token count, so I can't tell which one you actually use.
-  Tell me which to keep and I'll clean them up.
-- **Razorpay key**: check whether the live site currently uses a test key.
+- **Razorpay**: secrets + webhook still to be added; then run one test-mode payment.
+- **Duplicate desks**: gone with the data wipe, and the new sign-up path can't recreate them.
 - **iPhone sound and Android TV**: needs a real device check.
 
 ## How this was tested

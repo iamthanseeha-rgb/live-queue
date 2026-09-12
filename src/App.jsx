@@ -713,140 +713,128 @@ export default function App() {
       <html>
         <head>
           <meta charset="utf-8" />
+          <meta name="viewport" content="width=794" />
           <title>${title} - Printable QR Code Poster</title>
           <style>
-            @page {
-              size: A4 portrait;
-              margin: 0;
-            }
+            /* Sized in millimetres, not vh: a phone's screen height must never decide
+               how tall the poster is, or it spills onto a second page. */
+            @page { size: A4 portrait; margin: 0; }
             * {
               box-sizing: border-box;
               -webkit-print-color-adjust: exact !important;
               print-color-adjust: exact !important;
             }
+            html, body { margin: 0; padding: 0; background: #ffffff; }
             body {
               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-              margin: 0;
-              padding: 60px 48px;
-              background-color: #ffffff;
               color: #222222;
+            }
+            .sheet {
+              width: 210mm;
+              height: 296mm;
+              padding: 18mm 14mm 14mm;
               display: flex;
               flex-direction: column;
               align-items: center;
               justify-content: space-between;
-              min-height: 100vh;
               text-align: center;
+              overflow: hidden;
+              page-break-after: avoid;
+              break-after: avoid;
             }
+            .top, .middle, .bottom { width: 100%; }
             .header-badge {
               display: inline-block;
               background: #fff1f2;
-              border: 2px solid #fecdd3;
+              border: 0.6mm solid #fecdd3;
               color: #C8093A;
-              font-size: 14px;
+              font-size: 10pt;
               font-weight: 800;
-              letter-spacing: 2px;
+              letter-spacing: 1.6pt;
               text-transform: uppercase;
-              padding: 8px 24px;
+              padding: 2.5mm 8mm;
               border-radius: 999px;
-              margin-bottom: 24px;
+              margin-bottom: 7mm;
             }
             h1 {
-              font-size: 48px;
+              font-size: 30pt;
               font-weight: 900;
-              margin: 0 0 10px;
-              letter-spacing: -1.5px;
+              margin: 0 0 2mm;
+              letter-spacing: -0.6pt;
               line-height: 1.15;
               overflow-wrap: anywhere;
             }
             .subtitle {
-              font-size: 24px;
+              font-size: 16pt;
               color: #C8093A;
               font-weight: 600;
-              margin: 0 0 40px;
+              margin: 0;
               overflow-wrap: anywhere;
             }
             .qr-box {
               background: #ffffff;
-              border: 3px solid #f0f0f0;
-              border-radius: 36px;
-              padding: 40px;
-              box-shadow: 0 16px 40px rgba(0,0,0,0.06);
+              border: 0.8mm solid #f0f0f0;
+              border-radius: 10mm;
+              padding: 8mm;
+              box-shadow: 0 4mm 10mm rgba(0,0,0,0.06);
               display: inline-block;
-              margin-bottom: 36px;
             }
-            .qr-box img {
-              width: 320px;
-              height: 320px;
-              display: block;
-            }
+            .qr-box img { width: 88mm; height: 88mm; display: block; }
             .instruction-card {
-              max-width: 520px;
+              max-width: 150mm;
               background: #f8fafc;
-              border: 2px solid #e2e8f0;
-              border-radius: 20px;
-              padding: 20px 28px;
-              margin: 0 auto 36px;
+              border: 0.5mm solid #e2e8f0;
+              border-radius: 6mm;
+              padding: 6mm 8mm;
+              margin: 8mm auto 0;
             }
-            .instruction-title {
-              font-size: 18px;
-              font-weight: 800;
-              margin-bottom: 8px;
-              color: #0f172a;
-            }
-            .instruction-text {
-              font-size: 14px;
-              color: #475569;
-              margin: 0;
-              line-height: 1.5;
-            }
+            .instruction-title { font-size: 13pt; font-weight: 800; margin-bottom: 2mm; color: #0f172a; }
+            .instruction-text { font-size: 10.5pt; color: #475569; margin: 0; line-height: 1.45; }
             .link-pill {
               display: inline-block;
               background: #ffffff;
-              border: 2px solid #cbd5e1;
+              border: 0.6mm solid #cbd5e1;
               color: #0f172a;
-              font-size: 18px;
+              font-size: 14pt;
               font-weight: 800;
-              padding: 12px 28px;
+              padding: 3.5mm 8mm;
               border-radius: 999px;
-              margin-top: 12px;
+              margin-top: 4mm;
               overflow-wrap: anywhere;
             }
-            .footer {
-              font-size: 13px;
-              color: #64748b;
-              font-weight: 600;
-              letter-spacing: 0.5px;
-            }
+            .footer { font-size: 9.5pt; color: #64748b; font-weight: 600; letter-spacing: 0.3pt; }
           </style>
         </head>
         <body>
-          <div>
-            <div class="header-badge">LIVE QUEUE STATUS</div>
-            <h1>${title}</h1>
-            <div class="subtitle">${subtitle}</div>
-          </div>
-
-          <div>
-            <div class="qr-box">
-              <img src="${qrDataUrl}" alt="Live Queue QR Code" />
+          <div class="sheet">
+            <div class="top">
+              <div class="header-badge">LIVE QUEUE STATUS</div>
+              <h1>${title}</h1>
+              <div class="subtitle">${subtitle}</div>
             </div>
 
-            <div class="instruction-card">
-              <div class="instruction-title">Scan to track your token on your phone</div>
-              <p class="instruction-text">
-                Point your phone camera at the QR code above or visit the link below to watch the live queue anywhere.
-              </p>
-              <div class="link-pill">${link}</div>
-            </div>
-          </div>
+            <div class="middle">
+              <div class="qr-box">
+                <img src="${qrDataUrl}" alt="Live Queue QR Code" />
+              </div>
 
-          <div class="footer">
-            Powered by livequeue.co.in • Real-time queue updates
+              <div class="instruction-card">
+                <div class="instruction-title">Scan to track your token on your phone</div>
+                <p class="instruction-text">
+                  Point your phone camera at the QR code above, or visit the link below to watch the live queue from anywhere.
+                </p>
+                <div class="link-pill">${link}</div>
+              </div>
+            </div>
+
+            <div class="bottom">
+              <div class="footer">Powered by livequeue.co.in \u2022 Real-time queue updates</div>
+            </div>
           </div>
 
           <script>
             window.onload = function() {
-              window.print();
+              setTimeout(function () { window.print(); }, 300);
             };
           </script>
         </body>

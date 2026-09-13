@@ -970,6 +970,14 @@ export default function App() {
     const live = displayStatus === 'live';
     const dk = displayDark;
 
+    // How wide the token is allowed to get, in vw. One tabular digit is about
+    // 0.62em, so N digits need N × 0.62 em of width; 92 leaves a small side margin.
+    // Without this the display clips as soon as a clinic passes token 99.
+    // The "not started" em dash is a full-width glyph (~1em), not a 0.62em digit.
+    const tokenDigits = Math.max(String(activeQueue?.queue_position ?? '').length, 1);
+    const tokenAdvanceEm = notStarted ? 1.0 : tokenDigits * 0.62;
+    const tokenWidthVw = Math.round(92 / tokenAdvanceEm);
+
     // Two palettes for one layout: light for a phone or a bright waiting room,
     // dark for a screen that stays on all day (easier on the eyes, less burn-in).
     const t = dk
@@ -1121,7 +1129,11 @@ export default function App() {
             </div>
 
             {/* ── The number. This is the whole point of the screen, so it gets
-                   the room: no card, no border, just the digits. ── */}
+                   the room: no card, no border, just the digits.
+                   The width cap has to scale with the DIGIT COUNT, not just the
+                   viewport: a tabular digit is ~0.62em wide, so a 3-digit token
+                   needs three times the room a 1-digit token does. Sizing on vw
+                   alone clips "108" off both edges of the screen. ── */}
             <div style={{
               flex: 1,
               display: 'flex',
@@ -1145,11 +1157,12 @@ export default function App() {
                 className="lq-num"
                 aria-live="assertive"
                 style={{
-                  fontSize: 'clamp(5rem, min(62vh, 58vw), 44rem)',
+                  fontSize: `clamp(3rem, min(62vh, ${tokenWidthVw}vw), 44rem)`,
                   fontWeight: 800,
                   lineHeight: 0.95,
                   margin: `${space[2]}px 0 0`,
                   letterSpacing: '-0.045em',
+                  maxWidth: '100%',
                   color: t.number,
                 }}
               >

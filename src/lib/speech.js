@@ -13,20 +13,45 @@ export function speechSupported() {
   return typeof window !== 'undefined' && 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
 }
 
-// Prefer an Indian English voice, then any English voice, then whatever the device has.
+// The Web Speech API exposes no gender field, so a male voice can only be chosen by
+// name. These are the male and female voices actually shipped by Windows, Android,
+// iOS/macOS and Chrome — matched by name, with "male"/"female" in the name winning
+// outright when an engine states it.
+const MALE_NAMES = /\b(rishi|ravi|prabhat|madhur|hemant|daniel|alex|aaron|fred|george|guy|mark|david|eric|christopher|roger|steffan|thomas|oliver|liam|arthur|james|ryan|brian|tom|xander|male)\b/i;
+const FEMALE_NAMES = /\b(heera|neerja|swara|kalpana|veena|lekha|samantha|karen|moira|tessa|fiona|victoria|allison|ava|susan|zira|hazel|linda|catherine|aria|jenny|michelle|ana|emma|amy|sonia|libby|natasha|clara|female)\b/i;
+
+// Higher is better. Male first, then an Indian English accent, then anything English.
+function scoreVoice(v) {
+  const name = v.name || '';
+  const lang = v.lang || '';
+  let s = 0;
+
+  if (/\bfemale\b/i.test(name)) s -= 100;
+  else if (/\bmale\b/i.test(name)) s += 100;
+
+  if (FEMALE_NAMES.test(name)) s -= 60;
+  else if (MALE_NAMES.test(name)) s += 60;
+
+  if (/^en[-_]IN/i.test(lang)) s += 30;
+  else if (/^en[-_]GB/i.test(lang)) s += 14;
+  else if (/^en/i.test(lang)) s += 10;
+  else if (/^hi[-_]IN/i.test(lang)) s += 6;   // Indian Hindi voices read English numerals well
+  else s -= 40;                                // a non-English voice mangles "Token number"
+
+  if (v.localService) s += 4;                  // offline: no lag, no network dependency
+  return s;
+}
+
 function pickVoice() {
   if (!speechSupported()) return null;
   const voices = window.speechSynthesis.getVoices() || [];
   if (!voices.length) return null;
-  return (
-    voices.find((v) => v.lang === 'en-IN')
-    || voices.find((v) => /^en[-_]IN/i.test(v.lang))
-    || voices.find((v) => /hi[-_]IN/i.test(v.lang))     // Indian Hindi voices read English numbers well
-    || voices.find((v) => /^en/i.test(v.lang) && v.localService)
-    || voices.find((v) => /^en/i.test(v.lang))
-    || voices[0]
-    || null
-  );
+  return voices.reduce((best, v) => (scoreVoice(v) > scoreVoice(best) ? v : best), voices[0]);
+}
+
+// Exposed so the UI can tell the clinic which voice their device ended up using.
+export function currentVoiceName() {
+  return voice?.name || null;
 }
 
 function refreshVoice() {

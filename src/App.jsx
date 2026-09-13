@@ -4,7 +4,6 @@ import { QRCodeSVG } from 'qrcode.react';
 import { loadRazorpayScript } from './razorpay';
 import LandingPage from './LandingPage';
 import { normalizeSlug, validateSlug, safeDecode } from './lib/slug';
-import { unlockSound, playChime } from './lib/sound';
 import { announceToken, primeSpeech, speechSupported, stopSpeaking } from './lib/speech';
 import {
   color, font, size, space, radius, shadow,
@@ -40,11 +39,9 @@ export default function App() {
   const [lookupError, setLookupError] = useState('');
   const [displayStatus, setDisplayStatus] = useState('connecting'); // 'connecting' | 'live' | 'reconnecting'
   const [soundOn, setSoundOn] = useState(false);
-  // Voice announcements are remembered per device so a waiting-room screen that
-  // reloads overnight comes back the way the clinic left it.
-  const [voiceOn, setVoiceOn] = useState(() => {
-    try { return localStorage.getItem('lq_voice') !== 'off'; } catch { return true; }
-  });
+  // Announcements are session-scoped on purpose: no browser will speak until someone
+  // taps the page, so every reload needs a tap anyway and that tap means "announce".
+  const [voiceOn, setVoiceOn] = useState(true);
   // Dark display for a waiting-room screen that stays on all day. Opt-in, per device.
   const [displayDark, setDisplayDark] = useState(() => {
     try { return localStorage.getItem('lq_display_theme') === 'dark'; } catch { return false; }
@@ -263,11 +260,7 @@ export default function App() {
     if (!row) return;
     const prev = prevPosRef.current;
     if (prev !== null && row.queue_position > prev) {
-      playChime();
-      // Chime first, then the number – announcing over the chime makes both unclear.
-      if (soundOnRef.current && voiceOnRef.current) {
-        announceToken(row.queue_position, { delay: 700 });
-      }
+      if (soundOnRef.current && voiceOnRef.current) announceToken(row.queue_position);
     }
     prevPosRef.current = row.queue_position;
     setActiveQueue(row);
@@ -367,11 +360,14 @@ export default function App() {
     };
   }, [currentPage]);
 
+  // The browser will not speak until a real tap has happened on the page, and the
+  // priming utterance has to go out inside that same tap – that gesture is what
+  // unlocks speech for the rest of the session on iOS.
   function handleEnableSound() {
-    const ok = unlockSound();
+    if (!speechSupported()) return;
+    const ok = primeSpeech();
     setSoundOn(ok);
-    // Must happen inside this same tap – that gesture is what unlocks speech on iOS.
-    if (ok && voiceOn) primeSpeech();
+    if (ok) setVoiceOn(true);
   }
 
   function handleToggleDisplayTheme() {
@@ -383,7 +379,6 @@ export default function App() {
   function handleToggleVoice() {
     const next = !voiceOn;
     setVoiceOn(next);
-    try { localStorage.setItem('lq_voice', next ? 'on' : 'off'); } catch { /* private mode */ }
     if (next) {
       primeSpeech();
       // Say the current number once so the clinic can set the volume before a patient waits on it.
@@ -1209,25 +1204,18 @@ export default function App() {
                     : notStarted ? 'Queue Not Started' : 'Live Calling'}
               </div>
 
-              {soundOn ? (
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: space[3], flexWrap: 'wrap', justifyContent: 'center' }}>
-                  <span style={{ color: t.quiet, fontSize: size.sm, fontWeight: 550 }}>
-                    {voiceOn && speechSupported()
-                      ? 'Sound on – a chime plays and the number is announced'
-                      : 'Sound on – a chime plays when the number changes'}
-                  </span>
-                  {speechSupported() && (
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); handleToggleVoice(); }}
-                      aria-pressed={voiceOn}
-                      style={{ ...chromeBtn, color: voiceOn ? (dk ? '#FF9DB6' : color.brandText) : t.quiet }}
-                    >
-                      {voiceOn ? <IconSpeaker size={15} /> : <IconSpeakerOff size={15} />}
-                      {voiceOn ? 'Voice announcement on' : 'Voice announcement off'}
-                    </button>
-                  )}
-                </div>
+              {/* One control: the announcement. A tap is required before any browser
+                  will speak, so the screen asks for it once, then just toggles. */}
+              {!speechSupported() ? null : soundOn ? (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); handleToggleVoice(); }}
+                  aria-pressed={voiceOn}
+                  style={{ ...chromeBtn, color: voiceOn ? (dk ? '#FF9DB6' : color.brandText) : t.quiet }}
+                >
+                  {voiceOn ? <IconSpeaker size={15} /> : <IconSpeakerOff size={15} />}
+                  {voiceOn ? 'Voice announcement on' : 'Voice announcement off'}
+                </button>
               ) : (
                 <button
                   type="button"
@@ -1235,7 +1223,7 @@ export default function App() {
                   style={{ ...chromeBtn, color: dk ? '#FF9DB6' : color.brandText, fontWeight: 650 }}
                 >
                   <IconSpeaker size={15} />
-                  Tap to turn on sound {speechSupported() ? '& announcements' : ''}
+                  Tap to turn on voice announcements
                 </button>
               )}
             </div>

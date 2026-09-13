@@ -1642,7 +1642,15 @@ export default function App() {
             <p>Payment transactions for quota recharges are securely handled by Razorpay. LiveQueue does not access, process, or store sensitive credit card numbers or UPI PINs on its servers.</p>
 
             <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>4. Third-Party Sharing</h3>
-            <p>We do not sell, rent, or trade your personal data to any marketing third parties. Data is only communicated with essential cloud infrastructure (Supabase authentication and database storage) to deliver the service.</p>
+            <p>We do not sell, rent, or trade your personal data. Apart from the infrastructure required to run the service — Supabase (authentication and database) and Razorpay (payments) — the only data we share is the limited website-usage information described in section 5.</p>
+
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>5. Advertising &amp; Website Measurement</h3>
+            <p>Our marketing pages — the LiveQueue home page, the sign-in and sign-up pages, and the host dashboard — load the Meta Pixel. It tells Meta Platforms Ireland Limited when a page was viewed, when a host account was created, and when a recharge was completed, so that we can measure our Facebook and Instagram advertising and show our ads to clinics likely to find LiveQueue useful. Meta receives technical information such as your IP address, browser type and the page address.</p>
+            <p><strong>The public queue display pages carry no advertising or analytics tracking of any kind.</strong> If you are a patient who scanned a QR code to follow a clinic&rsquo;s queue, nothing about your visit is sent to Meta or to any advertising network. We consider a waiting room to be the wrong place for marketing technology, and we have deliberately excluded those pages.</p>
+            <p>You can limit this through your browser&rsquo;s privacy settings, an ad or tracker blocker, or Meta&rsquo;s own ad preferences.</p>
+
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>6. Your Choices</h3>
+            <p>You may ask us to correct or delete the account information we hold about you at any time. Write to us from the Contact page and we will action the request, subject to any records we are required by law to retain.</p>
           </div>
         </main>
       </div>

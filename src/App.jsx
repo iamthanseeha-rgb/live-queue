@@ -5,6 +5,7 @@ import { loadRazorpayScript } from './razorpay';
 import LandingPage from './LandingPage';
 import { normalizeSlug, validateSlug, safeDecode } from './lib/slug';
 import { announceToken, primeSpeech, speechSupported, stopSpeaking } from './lib/speech';
+import { initPixel, trackViewContent, trackSignUp, trackPurchase } from './lib/pixel';
 import {
   color, font, size, space, radius, shadow,
   panel, btnPrimary, btnSecondary, btnDark, input as inputStyle, label as labelStyle,
@@ -16,6 +17,9 @@ import {
 } from './lib/icons';
 import { friendlyError } from './lib/errors';
 
+// The only pages the Meta Pixel is allowed to run on. Everything else — including
+// the queue search and every /<slug> display — is patient-facing and stays untracked.
+const PIXEL_PAGES = { welcome: 'landing', admin_login: 'sign_in', admin_dash: 'desk_dashboard' };
 const STATIC_PAGES = ['contact', 'privacy', 'terms', 'refunds', 'welcome', 'login'];
 const LOW_BALANCE = 50;          // show the "running low" banner at or below this many calls
 const TITLE_MAX = 60;
@@ -254,6 +258,17 @@ export default function App() {
       document.title = titles[currentPage] || 'LiveQueue';
     }
   }, [currentPage, activeQueue?.queue_position, activeQueue?.queue_title]);
+
+  // Meta Pixel – an ALLOWLIST, not a denylist. It starts only on the three pages
+  // that exist for hosts and prospects. The queue-search page and the waiting-room
+  // display are both reachable by patients, and a slug URL renders as the search
+  // page for a moment before it resolves – so a denylist leaks. See lib/pixel.js.
+  useEffect(() => {
+    const name = PIXEL_PAGES[currentPage];
+    if (!name) return;
+    initPixel();
+    trackViewContent(name);
+  }, [currentPage]);
 
   // ── Public display ───────────────────────────────────────
   function applyPublicRow(row) {
@@ -508,6 +523,7 @@ export default function App() {
       // Same screen for new and already-registered emails, so the form can't be used
       // to check who has an account.
       setSignupStep('link_sent');
+      trackSignUp();
     }
   }
 
@@ -766,6 +782,7 @@ export default function App() {
         } else {
           if (typeof result.remaining_tokens === 'number') setRemainingTokens(result.remaining_tokens);
           setPaymentNotice({ type: 'success', text: `${pack.tokens.toLocaleString('en-IN')} calls added to your balance.` });
+          trackPurchase(pack.price_paise / 100, `${pack.name} Pack`);
         }
         setIsProcessing(false);
       },

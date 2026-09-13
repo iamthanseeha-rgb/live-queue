@@ -5,6 +5,16 @@ import { loadRazorpayScript } from './razorpay';
 import LandingPage from './LandingPage';
 import { normalizeSlug, validateSlug, safeDecode } from './lib/slug';
 import { unlockSound, playChime } from './lib/sound';
+import { announceToken, primeSpeech, speechSupported, stopSpeaking } from './lib/speech';
+import {
+  color, font, size, space, radius, shadow,
+  panel, btnPrimary, btnSecondary, btnDark, input as inputStyle, label as labelStyle,
+  eyebrow, h2, h3, body as bodyText, lead, tabularNums, srOnly,
+} from './lib/theme';
+import {
+  IconMoon, IconSun, IconExpand, IconSpeaker, IconSpeakerOff, IconPlus, IconMinus,
+  IconDownload, IconExternal, IconQr, IconArrowRight, IconCheck, IconWallet, IconLink,
+} from './lib/icons';
 import { friendlyError } from './lib/errors';
 
 const STATIC_PAGES = ['contact', 'privacy', 'terms', 'refunds', 'welcome', 'login'];
@@ -30,6 +40,17 @@ export default function App() {
   const [lookupError, setLookupError] = useState('');
   const [displayStatus, setDisplayStatus] = useState('connecting'); // 'connecting' | 'live' | 'reconnecting'
   const [soundOn, setSoundOn] = useState(false);
+  // Voice announcements are remembered per device so a waiting-room screen that
+  // reloads overnight comes back the way the clinic left it.
+  const [voiceOn, setVoiceOn] = useState(() => {
+    try { return localStorage.getItem('lq_voice') !== 'off'; } catch { return true; }
+  });
+  // Dark display for a waiting-room screen that stays on all day. Opt-in, per device.
+  const [displayDark, setDisplayDark] = useState(() => {
+    try { return localStorage.getItem('lq_display_theme') === 'dark'; } catch { return false; }
+  });
+  const soundOnRef = useRef(false);
+  const voiceOnRef = useRef(true);
   const prevPosRef = useRef(null);
   const activeQueueRef = useRef(null);
   const statusSlugRef = useRef(null);
@@ -74,6 +95,9 @@ export default function App() {
 
   useEffect(() => { currentPageRef.current = currentPage; }, [currentPage]);
   useEffect(() => { activeQueueRef.current = activeQueue; }, [activeQueue]);
+  // The realtime callback closes over an old render, so read these through refs.
+  useEffect(() => { soundOnRef.current = soundOn; }, [soundOn]);
+  useEffect(() => { voiceOnRef.current = voiceOn; }, [voiceOn]);
 
   const getRouteSlug = () => {
     const path = window.location.pathname.replace(/^\/+|\/+$/g, '');
@@ -238,7 +262,13 @@ export default function App() {
   function applyPublicRow(row) {
     if (!row) return;
     const prev = prevPosRef.current;
-    if (prev !== null && row.queue_position > prev) playChime();
+    if (prev !== null && row.queue_position > prev) {
+      playChime();
+      // Chime first, then the number – announcing over the chime makes both unclear.
+      if (soundOnRef.current && voiceOnRef.current) {
+        announceToken(row.queue_position, { delay: 700 });
+      }
+    }
     prevPosRef.current = row.queue_position;
     setActiveQueue(row);
   }
@@ -338,8 +368,37 @@ export default function App() {
   }, [currentPage]);
 
   function handleEnableSound() {
-    setSoundOn(unlockSound());
+    const ok = unlockSound();
+    setSoundOn(ok);
+    // Must happen inside this same tap – that gesture is what unlocks speech on iOS.
+    if (ok && voiceOn) primeSpeech();
   }
+
+  function handleToggleDisplayTheme() {
+    const next = !displayDark;
+    setDisplayDark(next);
+    try { localStorage.setItem('lq_display_theme', next ? 'dark' : 'light'); } catch { /* private mode */ }
+  }
+
+  function handleToggleVoice() {
+    const next = !voiceOn;
+    setVoiceOn(next);
+    try { localStorage.setItem('lq_voice', next ? 'on' : 'off'); } catch { /* private mode */ }
+    if (next) {
+      primeSpeech();
+      // Say the current number once so the clinic can set the volume before a patient waits on it.
+      const now = activeQueueRef.current?.queue_position;
+      if (now > 0) setTimeout(() => announceToken(now, { repeat: 1 }), 120);
+    } else {
+      stopSpeaking();
+    }
+  }
+
+  // Never leave an announcement mid-sentence when the screen navigates away.
+  useEffect(() => {
+    if (currentPage !== 'status') stopSpeaking();
+  }, [currentPage]);
+  useEffect(() => stopSpeaking, []);
 
   function toggleFullscreen() {
     const el = document.documentElement;
@@ -635,6 +694,32 @@ export default function App() {
     setIsProcessing(true);
     setPaymentNotice(null);
 
+    // A phone that has held this tab open for days can still be carrying an expired
+    // access token. Refresh it first, otherwise create-order answers 401 and the user
+    // only sees a generic "couldn't start the payment".
+    let live = null;
+    try {
+      const { data: got } = await supabase.auth.getSession();
+      live = got?.session ?? null;
+      // Only force a refresh when we can see the token is about to expire. If the
+      // refresh fails, keep the token we have and let the server decide – a transient
+      // network blip shouldn't block a payment that would have worked.
+      const expiresAt = Number(live?.expires_at) || 0;
+      if (live && expiresAt && expiresAt * 1000 - Date.now() < 120000) {
+        try {
+          const { data: refreshed } = await supabase.auth.refreshSession();
+          if (refreshed?.session) live = refreshed.session;
+        } catch { /* keep the existing session */ }
+      }
+    } catch {
+      live = null;
+    }
+    if (!live) {
+      setPaymentNotice({ type: 'error', text: 'Your sign-in has expired on this device. Please log out, sign in again, and retry the recharge.' });
+      setIsProcessing(false);
+      return;
+    }
+
     const loaded = await loadRazorpayScript();
     if (!loaded) {
       setPaymentNotice({ type: 'error', text: 'Couldn’t open Razorpay. Check your internet connection and try again.' });
@@ -646,7 +731,14 @@ export default function App() {
       body: { pack_id: pack.id },
     });
     if (orderError || !order?.order_id) {
-      setPaymentNotice({ type: 'error', text: 'Couldn’t start the payment. Please try again in a moment.' });
+      const status = orderError?.context?.status;
+      let text = 'Couldn’t start the payment. Please try again in a moment.';
+      if (status === 401) text = 'Your sign-in has expired on this device. Please log out, sign in again, and retry the recharge.';
+      else if (status === 403) text = 'This account is blocked. Please contact support.';
+      else if (status === 400) text = 'That pack is no longer available. Please refresh the page.';
+      else if (status === 502) text = 'Razorpay is not responding right now. Please try again in a minute.';
+      console.error('create-order failed', status ?? '(no status)', orderError);
+      setPaymentNotice({ type: 'error', text });
       setIsProcessing(false);
       return;
     }
@@ -876,42 +968,87 @@ export default function App() {
   if (currentPage === 'status') {
     const notStarted = activeQueue?.queue_position === 0;
     const live = displayStatus === 'live';
-    const pillButton = {
-      background: '#ffffff',
-      color: '#222222',
-      border: '1px solid #fee2e2',
-      padding: '8px 16px',
-      borderRadius: 999,
+    const dk = displayDark;
+
+    // Two palettes for one layout: light for a phone or a bright waiting room,
+    // dark for a screen that stays on all day (easier on the eyes, less burn-in).
+    const t = dk
+      ? {
+        bg: color.darkBg,
+        wash: 'radial-gradient(circle at 50% 0%, rgba(224,11,65,0.22) 0%, rgba(224,11,65,0) 62%)',
+        panel: color.darkPanel,
+        line: color.darkLine,
+        title: color.darkText,
+        sub: '#FF7A9C',
+        eyebrow: color.darkMuted,
+        number: '#FF3D6B',
+        chrome: 'rgba(255,255,255,0.07)',
+        chromeLine: 'rgba(255,255,255,0.14)',
+        chromeText: color.darkText,
+        quiet: color.darkMuted,
+      }
+      : {
+        bg: '#FFFFFF',
+        wash: 'radial-gradient(circle at 50% 0%, rgba(224,11,65,0.09) 0%, rgba(224,11,65,0) 58%)',
+        panel: color.surface,
+        line: color.line,
+        title: color.ink,
+        sub: color.brandText,
+        eyebrow: color.muted,
+        number: color.brand,
+        chrome: color.surface,
+        chromeLine: color.line,
+        chromeText: color.body,
+        quiet: color.muted,
+      };
+
+    const chromeBtn = {
+      background: t.chrome,
+      color: t.chromeText,
+      border: `1px solid ${t.chromeLine}`,
+      padding: '9px 15px',
+      borderRadius: radius.pill,
       cursor: 'pointer',
-      fontSize: 13,
+      fontSize: size.sm,
       fontWeight: 600,
-      boxShadow: '0 4px 12px rgba(255, 56, 92, 0.08)',
-      display: 'flex',
+      fontFamily: font.sans,
+      display: 'inline-flex',
       alignItems: 'center',
-      gap: 6,
+      gap: 7,
+      boxShadow: dk ? 'none' : shadow.xs,
+      backdropFilter: 'blur(6px)',
+      WebkitBackdropFilter: 'blur(6px)',
     };
+
+    const statusTone = !live
+      ? { bg: dk ? 'rgba(245,158,11,0.16)' : color.warningSoft, line: dk ? 'rgba(245,158,11,0.4)' : '#FDE68A', fg: dk ? '#FCD34D' : color.warning, dot: '#F59E0B' }
+      : notStarted
+        ? { bg: dk ? 'rgba(148,163,184,0.16)' : '#F1F5F9', line: dk ? 'rgba(148,163,184,0.32)' : color.line, fg: dk ? color.darkMuted : color.body, dot: '#94A3B8' }
+        : { bg: dk ? 'rgba(224,11,65,0.18)' : color.brandSoft, line: dk ? 'rgba(224,11,65,0.42)' : color.brandSoftBorder, fg: dk ? '#FF9DB6' : color.brandText, dot: color.brand };
+
     return (
       <div
         onClick={() => { if (!soundOn) handleEnableSound(); }}
         style={{
           minHeight: '100dvh',
-          backgroundColor: '#fffdfd',
-          backgroundImage: 'radial-gradient(circle at 50% -10%, rgba(255, 56, 92, 0.12) 0%, rgba(255, 106, 0, 0.04) 40%, rgba(255, 255, 255, 0) 75%)',
+          background: t.bg,
+          backgroundImage: t.wash,
           display: 'flex',
           flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif',
-          color: '#222222',
+          fontFamily: font.sans,
+          color: t.title,
           textAlign: 'center',
-          padding: '76px 20px 32px',
           position: 'relative',
           boxSizing: 'border-box',
-          width: '100%'
+          width: '100%',
+          transition: 'background-color .3s ease, color .3s ease',
         }}
       >
-        {/* Top bar: back + full screen */}
-        <div style={{ position: 'absolute', top: 20, left: 20, right: 20, display: 'flex', justifyContent: 'space-between', gap: 10, zIndex: 10 }}>
+        {/* ── Top chrome: kept low-contrast so it doesn't compete with the number ── */}
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          gap: space[2], padding: `${space[4]}px ${space[5]}px 0`, flexWrap: 'wrap',
+        }}>
           <button
             type="button"
             onClick={(e) => {
@@ -925,179 +1062,205 @@ export default function App() {
                 setCurrentPage('home');
               }
             }}
-            style={pillButton}
+            style={chromeBtn}
           >
             {session ? '← Back to Controller' : '← Search Desk'}
           </button>
+
           {activeQueue && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
-              style={pillButton}
-              aria-label="Toggle full screen"
-            >
-              Full screen
-            </button>
+            <div style={{ display: 'flex', gap: space[2], alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handleToggleDisplayTheme(); }}
+                style={chromeBtn}
+                aria-pressed={dk}
+                aria-label={dk ? 'Switch to light display' : 'Switch to dark display'}
+              >
+                {dk ? <IconSun size={15} /> : <IconMoon size={15} />}
+                <span>{dk ? 'Light' : 'Dark'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+                style={chromeBtn}
+                aria-label="Toggle full screen"
+              >
+                <IconExpand size={15} />
+                <span>Full screen</span>
+              </button>
+            </div>
           )}
         </div>
 
         {activeQueue ? (
-          <div style={{ maxWidth: 'min(92vw, 1100px)', width: '100%', margin: '0 auto' }}>
-
-            {/* Dynamic Status Pill */}
-            <div
-              role="status"
-              aria-live="polite"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '7px 16px',
-                borderRadius: 999,
-                background: !live ? '#fffbeb' : notStarted ? '#f1f5f9' : '#fff1f2',
-                border: !live ? '1px solid #fde68a' : notStarted ? '1px solid #e2e8f0' : '1px solid #fecdd3',
-                color: !live ? '#92400e' : notStarted ? '#475569' : '#C8093A',
-                fontSize: 11,
-                fontWeight: 800,
-                letterSpacing: 1.2,
-                textTransform: 'uppercase',
-                marginBottom: 16,
-                boxShadow: '0 2px 10px rgba(255, 56, 92, 0.08)'
-              }}
-            >
-              <span style={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                backgroundColor: !live ? '#f59e0b' : notStarted ? '#94a3b8' : '#FF385C',
-                display: 'inline-block',
-                boxShadow: !live ? '0 0 0 4px rgba(245, 158, 11, 0.25)' : notStarted ? '0 0 0 4px rgba(148, 163, 184, 0.25)' : '0 0 0 4px rgba(255, 56, 92, 0.25)'
-              }} />
-              {displayStatus === 'reconnecting'
-                ? 'Reconnecting… number may be out of date'
-                : displayStatus === 'connecting'
-                  ? 'Connecting…'
-                  : notStarted ? 'Queue Not Started' : 'Live Calling'}
+          <>
+            {/* ── Clinic identity ── */}
+            <div style={{ padding: `${space[5]}px ${space[5]}px 0` }}>
+              <h1 style={{
+                fontSize: 'clamp(1.4rem, 3.2vw, 2.6rem)',
+                fontWeight: 750,
+                margin: 0,
+                letterSpacing: '-0.025em',
+                color: t.title,
+                lineHeight: 1.15,
+                overflowWrap: 'anywhere',
+              }}>
+                {activeQueue.queue_title}
+              </h1>
+              {activeQueue.queue_subtitle && (
+                <p style={{
+                  fontSize: 'clamp(0.85rem, 1.5vw, 1.15rem)',
+                  color: t.sub,
+                  margin: `${space[2]}px 0 0`,
+                  fontWeight: 600,
+                  overflowWrap: 'anywhere',
+                }}>
+                  {activeQueue.queue_subtitle}
+                </p>
+              )}
             </div>
 
-            {/* Header Titles */}
-            <h1 style={{
-              fontSize: 'clamp(1.9rem, 5vw, 4rem)',
-              fontWeight: 800,
-              margin: '0 0 6px',
-              letterSpacing: '-0.03em',
-              color: '#222222',
-              lineHeight: 1.2,
-              overflowWrap: 'anywhere'
-            }}>
-              {activeQueue.queue_title}
-            </h1>
-            <p style={{
-              fontSize: 'clamp(1rem, 2.6vw, 1.6rem)',
-              color: '#C8093A',
-              margin: '0 0 28px',
-              fontWeight: 600,
-              overflowWrap: 'anywhere'
-            }}>
-              {activeQueue.queue_subtitle}
-            </p>
-
-            {/* Core Colorful Airbnb Card */}
+            {/* ── The number. This is the whole point of the screen, so it gets
+                   the room: no card, no border, just the digits. ── */}
             <div style={{
-              background: '#ffffff',
-              border: '1.5px solid #ffe4e6',
-              borderRadius: 32,
-              padding: 'clamp(32px, 6vh, 64px) 20px',
-              boxShadow: '0 20px 48px -8px rgba(255, 56, 92, 0.12), 0 8px 24px -4px rgba(0, 0, 0, 0.04)',
-              margin: '0 auto',
-              maxWidth: 'min(100%, 760px)',
-              position: 'relative'
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: `${space[4]}px ${space[4]}px`,
+              minHeight: 0,
             }}>
               <span style={{
-                fontSize: 'clamp(12px, 1.4vw, 18px)',
-                letterSpacing: 3,
+                fontSize: 'clamp(11px, 1.3vw, 17px)',
+                letterSpacing: '0.24em',
                 textTransform: 'uppercase',
-                color: '#64748b',
-                fontWeight: 800,
-                display: 'block'
+                color: t.eyebrow,
+                fontWeight: 700,
+                display: 'block',
               }}>
                 Now Serving
               </span>
-
-              {/* Vibrant Airbnb Gradient Number */}
               <div
+                className="lq-num"
                 aria-live="assertive"
                 style={{
-                  fontSize: 'clamp(7rem, min(30vw, 42vh), 26rem)',
-                  fontWeight: 900,
-                  lineHeight: 1.05,
-                  margin: '8px 0 0',
-                  letterSpacing: '-0.04em',
-                  fontVariantNumeric: 'tabular-nums',
-                  background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 55%, #D70466 100%)',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent'
+                  fontSize: 'clamp(5rem, min(62vh, 58vw), 44rem)',
+                  fontWeight: 800,
+                  lineHeight: 0.95,
+                  margin: `${space[2]}px 0 0`,
+                  letterSpacing: '-0.045em',
+                  color: t.number,
                 }}
               >
                 {notStarted ? '—' : activeQueue.queue_position}
               </div>
             </div>
 
-            {/* Footer: sound control */}
-            <div style={{ marginTop: 24, display: 'flex', justifyContent: 'center' }}>
+            {/* ── Bottom bar: connection state on the left, sound on the right ── */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexWrap: 'wrap',
+              gap: `${space[3]}px ${space[4]}px`,
+              padding: `0 ${space[5]}px ${space[6]}px`,
+            }}>
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '7px 14px',
+                  borderRadius: radius.pill,
+                  background: statusTone.bg,
+                  border: `1px solid ${statusTone.line}`,
+                  color: statusTone.fg,
+                  fontSize: 11,
+                  fontWeight: 750,
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                <span style={{
+                  width: 7, height: 7, borderRadius: '50%',
+                  backgroundColor: statusTone.dot, display: 'inline-block',
+                  boxShadow: `0 0 0 3.5px ${statusTone.dot}33`,
+                }} />
+                {displayStatus === 'reconnecting'
+                  ? 'Reconnecting… number may be out of date'
+                  : displayStatus === 'connecting'
+                    ? 'Connecting…'
+                    : notStarted ? 'Queue Not Started' : 'Live Calling'}
+              </div>
+
               {soundOn ? (
-                <span style={{ color: '#64748b', fontSize: 13, fontWeight: 600 }}>
-                  Sound on – a chime plays when the number changes
-                </span>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: space[3], flexWrap: 'wrap', justifyContent: 'center' }}>
+                  <span style={{ color: t.quiet, fontSize: size.sm, fontWeight: 550 }}>
+                    {voiceOn && speechSupported()
+                      ? 'Sound on – a chime plays and the number is announced'
+                      : 'Sound on – a chime plays when the number changes'}
+                  </span>
+                  {speechSupported() && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleToggleVoice(); }}
+                      aria-pressed={voiceOn}
+                      style={{ ...chromeBtn, color: voiceOn ? (dk ? '#FF9DB6' : color.brandText) : t.quiet }}
+                    >
+                      {voiceOn ? <IconSpeaker size={15} /> : <IconSpeakerOff size={15} />}
+                      {voiceOn ? 'Voice announcement on' : 'Voice announcement off'}
+                    </button>
+                  )}
+                </div>
               ) : (
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); handleEnableSound(); }}
-                  style={{ ...pillButton, color: '#C8093A', fontSize: 14 }}
+                  style={{ ...chromeBtn, color: dk ? '#FF9DB6' : color.brandText, fontWeight: 650 }}
                 >
-                  Tap to turn on sound
+                  <IconSpeaker size={15} />
+                  Tap to turn on sound {speechSupported() ? '& announcements' : ''}
                 </button>
               )}
             </div>
-
-          </div>
+          </>
         ) : (
           <div style={{
-            maxWidth: 380,
-            width: '100%',
-            background: '#ffffff',
-            padding: '32px 24px',
-            borderRadius: 24,
-            border: '1px solid #fee2e2',
-            boxShadow: '0 12px 36px rgba(255, 56, 92, 0.08)'
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: `${space[8]}px ${space[5]}px`,
           }}>
-            <p style={{ color: lookupError ? '#b42318' : '#475569', fontSize: 15, fontWeight: 600, margin: '0 0 16px' }}>
-              {lookupError || 'Loading live display...'}
-            </p>
-            {lookupError && (
-              <button
-                type="button"
-                onClick={() => {
-                  window.history.replaceState({}, '', '/');
-                  setLookupError('');
-                  setCurrentPage('home');
-                }}
-                style={{
-                  background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)',
-                  color: '#ffffff',
-                  border: 'none',
-                  padding: '12px 24px',
-                  borderRadius: 999,
-                  fontSize: 14,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  width: '100%',
-                  boxShadow: '0 4px 12px rgba(255, 56, 92, 0.3)'
-                }}
-              >
-                Back to Search
-              </button>
-            )}
+            <div style={{
+              maxWidth: 380, width: '100%',
+              background: t.panel,
+              padding: `${space[8]}px ${space[6]}px`,
+              borderRadius: radius.lg,
+              border: `1px solid ${t.line}`,
+              boxShadow: dk ? 'none' : shadow.md,
+              boxSizing: 'border-box',
+            }}>
+              <p style={{
+                color: lookupError ? (dk ? '#FF9E95' : color.danger) : t.quiet,
+                fontSize: size.md, fontWeight: 600, margin: `0 0 ${space[5]}px`, lineHeight: 1.5,
+              }}>
+                {lookupError || 'Loading live display…'}
+              </p>
+              {lookupError && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.history.replaceState({}, '', '/');
+                    setLookupError('');
+                    setCurrentPage('home');
+                  }}
+                  style={{ ...btnPrimary, width: '100%' }}
+                >
+                  Back to Search
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -1109,10 +1272,10 @@ export default function App() {
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'home') {
     return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', display: 'flex', flexDirection: 'column' }}>
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: '1px solid #ebebeb' }}>
+      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: font.sans, color: color.ink, display: 'flex', flexDirection: 'column' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: `1px solid ${color.line}` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => setCurrentPage('home')}>
-            <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: color.brand, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="4" width="18" height="16" rx="2" />
                 <line x1="7" y1="8" x2="17" y2="8" />
@@ -1120,8 +1283,8 @@ export default function App() {
                 <line x1="7" y1="16" x2="10" y2="16" />
               </svg>
             </div>
-            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: '#222222' }}>
-              live<span style={{ color: '#FF385C' }}>queue</span>
+            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: color.ink }}>
+              live<span style={{ color: color.brand }}>queue</span>
             </span>
           </div>
 
@@ -1139,7 +1302,7 @@ export default function App() {
             ) : (
               <button
                 onClick={() => goToLogin('login')}
-                style={{ background: 'transparent', color: '#222222', border: '1px solid #dddddd', padding: '9px 16px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+                style={{ background: 'transparent', color: color.ink, border: `1px solid ${color.lineStrong}`, padding: '9px 16px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
               >
                 Sign In / Sign Up
               </button>
@@ -1149,7 +1312,7 @@ export default function App() {
 
         <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px 80px' }}>
           <div style={{ textAlign: 'center', maxWidth: 680, marginBottom: 36 }}>
-            <h1 style={{ fontSize: 'clamp(2.1rem, 5vw, 3.6rem)', fontWeight: 800, margin: '0 0 14px', letterSpacing: '-0.02em', lineHeight: 1.15, color: '#222222' }}>
+            <h1 style={{ fontSize: 'clamp(2.1rem, 5vw, 3.6rem)', fontWeight: 800, margin: '0 0 14px', letterSpacing: '-0.02em', lineHeight: 1.15, color: color.ink }}>
               Track any queue,<br />live in real-time.
             </h1>
             <p style={{ fontSize: 16, color: '#717171', margin: 0, fontWeight: 400, lineHeight: 1.5 }}>
@@ -1164,7 +1327,7 @@ export default function App() {
                 display: 'flex',
                 alignItems: 'center',
                 backgroundColor: '#ffffff',
-                border: '1px solid #dddddd',
+                border: `1px solid ${color.lineStrong}`,
                 borderRadius: 999,
                 padding: '6px 6px 6px 20px',
                 boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
@@ -1172,7 +1335,7 @@ export default function App() {
               }}
             >
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                <span style={{ color: '#64748b', fontSize: 18, fontWeight: 500, marginRight: 2, userSelect: 'none' }}>/</span>
+                <span style={{ color: color.muted, fontSize: 18, fontWeight: 500, marginRight: 2, userSelect: 'none' }}>/</span>
                 <input
                   id="queue-search"
                   type="text"
@@ -1184,14 +1347,14 @@ export default function App() {
                   placeholder="dr-adam or room-1"
                   value={inputQuery}
                   onChange={e => setInputQuery(e.target.value)}
-                  style={{ border: 'none', outline: 'none', fontSize: 16, color: '#222222', background: '#ffffff', fontWeight: 500, width: '100%', padding: 0 }}
+                  style={{ border: 'none', outline: 'none', fontSize: 16, color: color.ink, background: '#ffffff', fontWeight: 500, width: '100%', padding: 0 }}
                 />
               </div>
 
               <button
                 type="submit"
                 style={{
-                  background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)',
+                  background: color.brand,
                   color: '#ffffff',
                   border: 'none',
                   borderRadius: 999,
@@ -1224,7 +1387,7 @@ export default function App() {
         </main>
 
         <footer style={{
-          borderTop: '1px solid #ebebeb',
+          borderTop: `1px solid ${color.line}`,
           padding: '24px 20px 32px',
           display: 'flex',
           flexDirection: 'column',
@@ -1292,13 +1455,13 @@ export default function App() {
     const whatsappUrl = "https://wa.me/918921677207?text=Hi%20LiveQueue%20Team%2C%20I%20have%20an%20issue%2Fsuggestion%3A";
 
     return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', display: 'flex', flexDirection: 'column' }}>
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: '1px solid #ebebeb' }}>
+      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: font.sans, color: color.ink, display: 'flex', flexDirection: 'column' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: `1px solid ${color.line}` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => {
             window.history.replaceState({}, '', '/');
             setCurrentPage('home');
           }}>
-            <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: color.brand, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="4" width="18" height="16" rx="2" />
                 <line x1="7" y1="8" x2="17" y2="8" />
@@ -1306,8 +1469,8 @@ export default function App() {
                 <line x1="7" y1="16" x2="10" y2="16" />
               </svg>
             </div>
-            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: '#222222' }}>
-              live<span style={{ color: '#FF385C' }}>queue</span>
+            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: color.ink }}>
+              live<span style={{ color: color.brand }}>queue</span>
             </span>
           </div>
 
@@ -1322,7 +1485,7 @@ export default function App() {
                   setCurrentPage('home');
                 }
               }}
-              style={{ background: '#f7f7f7', color: '#222222', border: '1px solid #dddddd', padding: '9px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+              style={{ background: color.page, color: color.ink, border: `1px solid ${color.lineStrong}`, padding: '9px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
             >
               ← Back
             </button>
@@ -1338,9 +1501,9 @@ export default function App() {
               gap: 8,
               padding: '6px 14px',
               borderRadius: 999,
-              background: '#fff1f2',
+              background: color.brandSoft,
               border: '1px solid #fecdd3',
-              color: '#C8093A',
+              color: color.brandText,
               fontSize: 11,
               fontWeight: 800,
               letterSpacing: 1.2,
@@ -1350,7 +1513,7 @@ export default function App() {
               Support & Feedback
             </div>
 
-            <h1 style={{ fontSize: 'clamp(2rem, 5vw, 2.8rem)', fontWeight: 800, margin: '0 0 12px', letterSpacing: '-0.03em', color: '#222222' }}>
+            <h1 style={{ fontSize: 'clamp(2rem, 5vw, 2.8rem)', fontWeight: 800, margin: '0 0 12px', letterSpacing: '-0.03em', color: color.ink }}>
               Contact Us
             </h1>
             <p style={{ fontSize: 16, color: '#717171', margin: '0 0 32px', lineHeight: 1.5 }}>
@@ -1365,11 +1528,11 @@ export default function App() {
               boxShadow: '0 16px 40px -8px rgba(255, 56, 92, 0.12), 0 4px 16px rgba(0,0,0,0.04)',
               textAlign: 'center'
             }}>
-              <div style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 1.5, color: '#64748b', fontWeight: 800 }}>
+              <div style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 1.5, color: color.muted, fontWeight: 800 }}>
                 Direct WhatsApp Support
               </div>
               
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#222222', margin: '8px 0 24px', letterSpacing: '-0.02em' }}>
+              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: color.ink, margin: '8px 0 24px', letterSpacing: '-0.02em' }}>
                 +91 8921677207
               </div>
 
@@ -1399,7 +1562,7 @@ export default function App() {
               </a>
             </div>
 
-            <div style={{ marginTop: 28, fontSize: 13, color: '#64748b' }}>
+            <div style={{ marginTop: 28, fontSize: 13, color: color.muted }}>
               Typically replies within minutes • Monday to Sunday
             </div>
 
@@ -1414,13 +1577,13 @@ export default function App() {
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'privacy') {
     return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', display: 'flex', flexDirection: 'column' }}>
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: '1px solid #ebebeb' }}>
+      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: font.sans, color: color.ink, display: 'flex', flexDirection: 'column' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: `1px solid ${color.line}` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => {
             window.history.replaceState({}, '', '/');
             setCurrentPage('home');
           }}>
-            <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: color.brand, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="4" width="18" height="16" rx="2" />
                 <line x1="7" y1="8" x2="17" y2="8" />
@@ -1428,8 +1591,8 @@ export default function App() {
                 <line x1="7" y1="16" x2="10" y2="16" />
               </svg>
             </div>
-            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: '#222222' }}>
-              live<span style={{ color: '#FF385C' }}>queue</span>
+            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: color.ink }}>
+              live<span style={{ color: color.brand }}>queue</span>
             </span>
           </div>
 
@@ -1438,29 +1601,29 @@ export default function App() {
               window.history.replaceState({}, '', '/');
               setCurrentPage('home');
             }}
-            style={{ background: '#f7f7f7', color: '#222222', border: '1px solid #dddddd', padding: '9px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+            style={{ background: color.page, color: color.ink, border: `1px solid ${color.lineStrong}`, padding: '9px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
           >
             ← Back
           </button>
         </header>
 
         <main style={{ flex: 1, maxWidth: 760, width: '100%', margin: '0 auto', padding: '48px 24px 80px', boxSizing: 'border-box' }}>
-          <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8, color: '#222222' }}>Privacy Policy</h1>
+          <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8, color: color.ink }}>Privacy Policy</h1>
           <p style={{ color: '#717171', fontSize: 13, marginBottom: 28 }}>Last Updated: September 2026</p>
 
           <div style={{ lineHeight: 1.7, fontSize: 15, color: '#334155' }}>
             <p>At LiveQueue (accessible via <strong>livequeue.co.in</strong>), we prioritize the privacy and security of both our host administrators and public queue viewers.</p>
 
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>1. Information We Collect</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>1. Information We Collect</h3>
             <p>We collect basic account credentials (such as your full name and email address) when you register as a host. For public users tracking queues, no personal identity registration is demanded or stored.</p>
 
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>2. How Information Is Used</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>2. How Information Is Used</h3>
             <p>Your details are used strictly to maintain your desk profile, synchronize live queue token updates in real time, and deliver password-reset or security verification links.</p>
 
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>3. Payments & Data Protection</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>3. Payments & Data Protection</h3>
             <p>Payment transactions for quota recharges are securely handled by Razorpay. LiveQueue does not access, process, or store sensitive credit card numbers or UPI PINs on its servers.</p>
 
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>4. Third-Party Sharing</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>4. Third-Party Sharing</h3>
             <p>We do not sell, rent, or trade your personal data to any marketing third parties. Data is only communicated with essential cloud infrastructure (Supabase authentication and database storage) to deliver the service.</p>
           </div>
         </main>
@@ -1473,13 +1636,13 @@ export default function App() {
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'terms') {
     return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', display: 'flex', flexDirection: 'column' }}>
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: '1px solid #ebebeb' }}>
+      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: font.sans, color: color.ink, display: 'flex', flexDirection: 'column' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: `1px solid ${color.line}` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => {
             window.history.replaceState({}, '', '/');
             setCurrentPage('home');
           }}>
-            <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: color.brand, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="4" width="18" height="16" rx="2" />
                 <line x1="7" y1="8" x2="17" y2="8" />
@@ -1487,8 +1650,8 @@ export default function App() {
                 <line x1="7" y1="16" x2="10" y2="16" />
               </svg>
             </div>
-            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: '#222222' }}>
-              live<span style={{ color: '#FF385C' }}>queue</span>
+            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: color.ink }}>
+              live<span style={{ color: color.brand }}>queue</span>
             </span>
           </div>
 
@@ -1497,27 +1660,27 @@ export default function App() {
               window.history.replaceState({}, '', '/');
               setCurrentPage('home');
             }}
-            style={{ background: '#f7f7f7', color: '#222222', border: '1px solid #dddddd', padding: '9px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+            style={{ background: color.page, color: color.ink, border: `1px solid ${color.lineStrong}`, padding: '9px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
           >
             ← Back
           </button>
         </header>
 
         <main style={{ flex: 1, maxWidth: 760, width: '100%', margin: '0 auto', padding: '48px 24px 80px', boxSizing: 'border-box' }}>
-          <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8, color: '#222222' }}>Terms of Service</h1>
+          <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8, color: color.ink }}>Terms of Service</h1>
           <p style={{ color: '#717171', fontSize: 13, marginBottom: 28 }}>Last Updated: September 2026</p>
 
           <div style={{ lineHeight: 1.7, fontSize: 15, color: '#334155' }}>
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 20, marginBottom: 8 }}>1. Acceptance of Terms</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 20, marginBottom: 8 }}>1. Acceptance of Terms</h3>
             <p>By creating an account or accessing the live queue display at livequeue.co.in, you agree to comply with and be bound by these Terms of Service.</p>
 
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>2. Service Description</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>2. Service Description</h3>
             <p>LiveQueue provides an online queue counter management service allowing clinics, businesses, and desk managers to control sequential token numbers and display them publicly in real time.</p>
 
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>3. Account & Token Usage</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>3. Account & Token Usage</h3>
             <p>Hosts receive an initial token quota upon account activation. Advancing tokens consumes quota units from the balance. Additional calls can be purchased through designated recharge packs.</p>
 
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>4. Acceptable Conduct</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>4. Acceptable Conduct</h3>
             <p>Users agree not to exploit the platform for spamming, illegitimate queuing, or activities that compromise server infrastructure or public availability.</p>
           </div>
         </main>
@@ -1530,13 +1693,13 @@ export default function App() {
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'refunds') {
     return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', display: 'flex', flexDirection: 'column' }}>
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: '1px solid #ebebeb' }}>
+      <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: font.sans, color: color.ink, display: 'flex', flexDirection: 'column' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: `1px solid ${color.line}` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => {
             window.history.replaceState({}, '', '/');
             setCurrentPage('home');
           }}>
-            <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #FF385C 0%, #E00B41 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: color.brand, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="4" width="18" height="16" rx="2" />
                 <line x1="7" y1="8" x2="17" y2="8" />
@@ -1544,8 +1707,8 @@ export default function App() {
                 <line x1="7" y1="16" x2="10" y2="16" />
               </svg>
             </div>
-            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: '#222222' }}>
-              live<span style={{ color: '#FF385C' }}>queue</span>
+            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: color.ink }}>
+              live<span style={{ color: color.brand }}>queue</span>
             </span>
           </div>
 
@@ -1554,24 +1717,24 @@ export default function App() {
               window.history.replaceState({}, '', '/');
               setCurrentPage('home');
             }}
-            style={{ background: '#f7f7f7', color: '#222222', border: '1px solid #dddddd', padding: '9px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+            style={{ background: color.page, color: color.ink, border: `1px solid ${color.lineStrong}`, padding: '9px 18px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
           >
             ← Back
           </button>
         </header>
 
         <main style={{ flex: 1, maxWidth: 760, width: '100%', margin: '0 auto', padding: '48px 24px 80px', boxSizing: 'border-box' }}>
-          <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8, color: '#222222' }}>Cancellation & Refund Policy</h1>
+          <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8, color: color.ink }}>Cancellation & Refund Policy</h1>
           <p style={{ color: '#717171', fontSize: 13, marginBottom: 28 }}>Last Updated: September 2026</p>
 
           <div style={{ lineHeight: 1.7, fontSize: 15, color: '#334155' }}>
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 20, marginBottom: 8 }}>1. Digital Services & Token Packs</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 20, marginBottom: 8 }}>1. Digital Services & Token Packs</h3>
             <p>LiveQueue delivers immediate digital service access. Quota packs purchased provide instant calling credits directly to your desk controller account.</p>
 
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>2. Refund Policy</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>2. Refund Policy</h3>
             <p>Because calling quota units are made available immediately upon payment capture, consumed tokens are non-refundable. If an amount is debited from your payment source but quota tokens are not credited due to network or gateway technical issues, our team will investigate and either credit the pack or initiate a full refund within 5 to 7 business days.</p>
 
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#222222', marginTop: 24, marginBottom: 8 }}>3. Contact Support</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>3. Contact Support</h3>
             <p>For any billing inquiries, transaction verifications, or assistance, reach us directly via WhatsApp at <strong>+91 8921677207</strong>.</p>
           </div>
         </main>
@@ -1584,13 +1747,13 @@ export default function App() {
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'reset_password') {
     return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', padding: 20 }}>
-        <div style={{ maxWidth: 420, width: '100%', backgroundColor: '#ffffff', borderRadius: 24, padding: 28, boxShadow: '0 12px 36px rgba(0,0,0,0.08)', border: '1px solid #ebebeb' }}>
-          <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Set New Password</h2>
+      <div style={{ minHeight: '100vh', backgroundColor: color.page, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: font.sans, padding: 20 }}>
+        <div style={{ maxWidth: 420, width: '100%', backgroundColor: '#ffffff', borderRadius: 24, padding: 28, boxShadow: '0 12px 36px rgba(0,0,0,0.08)', border: `1px solid ${color.line}` }}>
+          <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px', color: color.ink }}>Set New Password</h2>
           <p style={{ color: '#717171', fontSize: 13, margin: '0 0 20px' }}>Enter your new password to regain access to your desk.</p>
 
           {authError && (
-            <div style={{ backgroundColor: '#fff8f6', color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 16 }}>
+            <div style={{ backgroundColor: color.dangerSoft, color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 16 }}>
               {authError}
             </div>
           )}
@@ -1602,7 +1765,7 @@ export default function App() {
           )}
 
           <form onSubmit={handleUpdatePassword}>
-            <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
+            <div style={{ border: `1px solid ${color.lineStrong}`, borderRadius: 12, padding: '10px 14px', marginBottom: 20 }}>
               <label htmlFor="new-password" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>New Password</label>
               <input
                 id="new-password"
@@ -1613,7 +1776,7 @@ export default function App() {
                 placeholder="At least 8 characters"
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
-                style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
+                style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: color.ink, background: '#ffffff', padding: 0 }}
               />
             </div>
 
@@ -1623,7 +1786,7 @@ export default function App() {
               style={{
                 width: '100%',
                 padding: 14,
-                background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)',
+                background: color.brand,
                 color: '#fff',
                 border: 'none',
                 borderRadius: 12,
@@ -1645,9 +1808,14 @@ export default function App() {
   // ══════════════════════════════════════════════════════════
   if (currentPage === 'admin_login' && !session) {
     return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', padding: 16 }}>
-        <div style={{ maxWidth: 420, width: '100%', maxHeight: '90vh', overflowY: 'auto', backgroundColor: '#ffffff', borderRadius: 24, boxShadow: '0 12px 36px rgba(0,0,0,0.08)', border: '1px solid #ebebeb' }}>
-          <div style={{ display: 'flex', alignItems: 'center', padding: '18px 20px', borderBottom: '1px solid #ebebeb' }}>
+      <div style={{
+        minHeight: '100vh', backgroundColor: color.page,
+        backgroundImage: 'radial-gradient(circle at 50% 0%, rgba(224,11,65,0.07) 0%, rgba(224,11,65,0) 55%)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: font.sans, padding: 16,
+      }}>
+        <div style={{ maxWidth: 420, width: '100%', maxHeight: '90vh', overflowY: 'auto', backgroundColor: '#ffffff', borderRadius: radius.xl, boxShadow: shadow.lg, border: `1px solid ${color.line}` }}>
+          <div style={{ display: 'flex', alignItems: 'center', padding: '18px 20px', borderBottom: `1px solid ${color.line}` }}>
             <button
               type="button"
               aria-label="Close sign-in"
@@ -1709,7 +1877,7 @@ export default function App() {
             )}
 
             {authError && (
-              <div role="alert" style={{ backgroundColor: '#fff8f6', color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 18 }}>
+              <div role="alert" style={{ backgroundColor: color.dangerSoft, color: '#c13515', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 12, fontSize: 13, marginBottom: 18 }}>
                 {authError}
               </div>
             )}
@@ -1722,11 +1890,11 @@ export default function App() {
 
             {authMode === 'login' && (
               <div>
-                <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Welcome Host</h2>
+                <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 6px', color: color.ink }}>Welcome Host</h2>
                 <p style={{ color: '#717171', fontSize: 13, margin: '0 0 18px' }}>Sign in using your registered email and password.</p>
 
                 <form onSubmit={handleLogin}>
-                  <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
+                  <div style={{ border: `1px solid ${color.lineStrong}`, borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
                     <label htmlFor="login-email" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Email Address</label>
                     <input
                       id="login-email"
@@ -1736,11 +1904,11 @@ export default function App() {
                       placeholder="name@example.com"
                       value={email}
                       onChange={e => setEmail(e.target.value)}
-                      style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
+                      style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: color.ink, background: '#ffffff', padding: 0 }}
                     />
                   </div>
 
-                  <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 12 }}>
+                  <div style={{ border: `1px solid ${color.lineStrong}`, borderRadius: 12, padding: '10px 14px', marginBottom: 12 }}>
                     <label htmlFor="login-password" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Password</label>
                     <input
                       id="login-password"
@@ -1750,7 +1918,7 @@ export default function App() {
                       placeholder="••••••••"
                       value={password}
                       onChange={e => setPassword(e.target.value)}
-                      style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
+                      style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: color.ink, background: '#ffffff', padding: 0 }}
                     />
                   </div>
 
@@ -1758,7 +1926,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => switchAuthMode('forgot')}
-                      style={{ background: 'none', border: 'none', color: '#C8093A', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                      style={{ background: 'none', border: 'none', color: color.brandText, fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}
                     >
                       Forgot password?
                     </button>
@@ -1770,7 +1938,7 @@ export default function App() {
                     style={{
                       width: '100%',
                       padding: 14,
-                      background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)',
+                      background: color.brand,
                       color: '#fff',
                       border: 'none',
                       borderRadius: 12,
@@ -1788,7 +1956,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => switchAuthMode('signup')}
-                    style={{ background: 'none', border: 'none', color: '#C8093A', fontWeight: 700, cursor: 'pointer', padding: 0 }}
+                    style={{ background: 'none', border: 'none', color: color.brandText, fontWeight: 700, cursor: 'pointer', padding: 0 }}
                   >
                     Sign Up
                   </button>
@@ -1800,13 +1968,13 @@ export default function App() {
               <div>
                 {signupStep === 'form' ? (
                   <div>
-                    <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Create Your Desk</h2>
+                    <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 6px', color: color.ink }}>Create Your Desk</h2>
                     <p style={{ color: '#717171', fontSize: 13, margin: '0 0 18px' }}>Register your host account with email and password.</p>
 
                     <form onSubmit={handleSignUp}>
-                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
+                      <div style={{ border: `1px solid ${color.lineStrong}`, borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
                         <label htmlFor="signup-name" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                          Full Name <span style={{ color: '#C8093A' }}>*</span>
+                          Full Name <span style={{ color: color.brandText }}>*</span>
                         </label>
                         <input
                           id="signup-name"
@@ -1817,13 +1985,13 @@ export default function App() {
                           placeholder="Dr. Adam or Clinic Host"
                           value={fullName}
                           onChange={e => setFullName(e.target.value)}
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: color.ink, background: '#ffffff', padding: 0 }}
                         />
                       </div>
 
-                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
+                      <div style={{ border: `1px solid ${color.lineStrong}`, borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
                         <label htmlFor="signup-email" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                          Email Address <span style={{ color: '#C8093A' }}>*</span>
+                          Email Address <span style={{ color: color.brandText }}>*</span>
                         </label>
                         <input
                           id="signup-email"
@@ -1833,13 +2001,13 @@ export default function App() {
                           placeholder="name@example.com"
                           value={email}
                           onChange={e => setEmail(e.target.value)}
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: color.ink, background: '#ffffff', padding: 0 }}
                         />
                       </div>
 
-                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
+                      <div style={{ border: `1px solid ${color.lineStrong}`, borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
                         <label htmlFor="signup-password" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                          Password <span style={{ color: '#C8093A' }}>*</span>
+                          Password <span style={{ color: color.brandText }}>*</span>
                         </label>
                         <input
                           id="signup-password"
@@ -1850,13 +2018,13 @@ export default function App() {
                           placeholder="At least 8 characters"
                           value={password}
                           onChange={e => setPassword(e.target.value)}
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: color.ink, background: '#ffffff', padding: 0 }}
                         />
                       </div>
 
-                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 18 }}>
+                      <div style={{ border: `1px solid ${color.lineStrong}`, borderRadius: 12, padding: '10px 14px', marginBottom: 18 }}>
                         <label htmlFor="signup-confirm" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                          Confirm Password <span style={{ color: '#C8093A' }}>*</span>
+                          Confirm Password <span style={{ color: color.brandText }}>*</span>
                         </label>
                         <input
                           id="signup-confirm"
@@ -1866,7 +2034,7 @@ export default function App() {
                           placeholder="Repeat password"
                           value={confirmPassword}
                           onChange={e => setConfirmPassword(e.target.value)}
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: color.ink, background: '#ffffff', padding: 0 }}
                         />
                       </div>
 
@@ -1876,7 +2044,7 @@ export default function App() {
                         style={{
                           width: '100%',
                           padding: 14,
-                          background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)',
+                          background: color.brand,
                           color: '#fff',
                           border: 'none',
                           borderRadius: 12,
@@ -1894,7 +2062,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => switchAuthMode('login')}
-                        style={{ background: 'none', border: 'none', color: '#C8093A', fontWeight: 700, cursor: 'pointer', padding: 0 }}
+                        style={{ background: 'none', border: 'none', color: color.brandText, fontWeight: 700, cursor: 'pointer', padding: 0 }}
                       >
                         Sign In
                       </button>
@@ -1902,24 +2070,24 @@ export default function App() {
                   </div>
                 ) : (
                   <div style={{ textAlign: 'center', padding: '8px 0' }}>
-                    <div style={{ width: 56, height: 56, borderRadius: '50%', backgroundColor: '#ffeef1', color: '#FF385C', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                    <div style={{ width: 56, height: 56, borderRadius: '50%', backgroundColor: '#ffeef1', color: color.brand, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
                       <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                         <rect x="2" y="4" width="20" height="16" rx="2"></rect>
                         <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
                       </svg>
                     </div>
-                    <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>Check Your Inbox</h2>
+                    <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 8px', color: color.ink }}>Check Your Inbox</h2>
                     <p style={{ color: '#717171', fontSize: 13, margin: '0 0 18px', lineHeight: 1.5 }}>
                       If this email isn’t registered yet, we’ve sent an activation link to:<br />
-                      <strong style={{ color: '#222222' }}>{email}</strong>
+                      <strong style={{ color: color.ink }}>{email}</strong>
                     </p>
-                    <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 14, padding: 14, fontSize: 13, color: '#475569', lineHeight: 1.5, textAlign: 'left', marginBottom: 20 }}>
+                    <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 14, padding: 14, fontSize: 13, color: color.body, lineHeight: 1.5, textAlign: 'left', marginBottom: 20 }}>
                       💡 <strong>Next step:</strong> Click the confirmation link in your inbox, then come back and sign in. Already have an account? Sign in, or use “Forgot password?”.
                     </div>
                     <button
                       type="button"
                       onClick={() => switchAuthMode('login')}
-                      style={{ width: '100%', padding: 13, background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: 'pointer', marginBottom: 12 }}
+                      style={{ width: '100%', padding: 13, background: color.brand, color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: 'pointer', marginBottom: 12 }}
                     >
                       Go to Sign In
                     </button>
@@ -1940,11 +2108,11 @@ export default function App() {
               <div>
                 {!forgotSubmitted ? (
                   <div>
-                    <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 6px', color: '#222222' }}>Reset Password</h2>
+                    <h2 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 6px', color: color.ink }}>Reset Password</h2>
                     <p style={{ color: '#717171', fontSize: 13, margin: '0 0 18px' }}>Enter your email to receive a password reset link.</p>
 
                     <form onSubmit={handleForgotPassword}>
-                      <div style={{ border: '1px solid #b0b0b0', borderRadius: 12, padding: '10px 14px', marginBottom: 18 }}>
+                      <div style={{ border: `1px solid ${color.lineStrong}`, borderRadius: 12, padding: '10px 14px', marginBottom: 18 }}>
                         <label htmlFor="forgot-email" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>Registered Email</label>
                         <input
                           id="forgot-email"
@@ -1954,14 +2122,14 @@ export default function App() {
                           placeholder="name@example.com"
                           value={email}
                           onChange={e => setEmail(e.target.value)}
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: '#222222', background: '#ffffff', padding: 0 }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: color.ink, background: '#ffffff', padding: 0 }}
                         />
                       </div>
 
                       <button
                         type="submit"
                         disabled={loading}
-                        style={{ width: '100%', padding: 14, background: 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: 'pointer', marginBottom: 16 }}
+                        style={{ width: '100%', padding: 14, background: color.brand, color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: 'pointer', marginBottom: 16 }}
                       >
                         {loading ? 'Sending link...' : 'Send Reset Link'}
                       </button>
@@ -1974,7 +2142,7 @@ export default function App() {
                         <polyline points="20 6 9 17 4 12"></polyline>
                       </svg>
                     </div>
-                    <h2 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 8px', color: '#222222' }}>Reset Link Sent</h2>
+                    <h2 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 8px', color: color.ink }}>Reset Link Sent</h2>
                     <p style={{ color: '#717171', fontSize: 13, lineHeight: 1.5, margin: '0 0 18px' }}>
                       If <strong>{email}</strong> has a LiveQueue account, a reset link is on its way.
                     </p>
@@ -2002,71 +2170,111 @@ export default function App() {
   // VIEW 5: ADMIN CONTROLLER DASHBOARD
   // ══════════════════════════════════════════════════════════
   const deskReady = !!(session && queue && queue.admin_id === session.user.id);
-  const primaryGradient = 'linear-gradient(90deg, #E00B41 0%, #C8093A 100%)';
-  const fieldLabel = { fontSize: 12, fontWeight: 700, color: '#595959', display: 'block', marginBottom: 4 };
-  const fieldInput = { width: '100%', padding: '10px 12px', boxSizing: 'border-box', border: '1px solid #b0b0b0', borderRadius: 10, fontSize: 14, background: '#ffffff', color: '#222222' };
+  const fieldLabel = labelStyle;
+  const fieldInput = inputStyle;
   const noticeColors = {
-    info: { bg: '#eff6ff', fg: '#1e40af', border: '#bfdbfe' },
-    success: { bg: '#f0fdf4', fg: '#166534', border: '#bbf7d0' },
-    error: { bg: '#fff8f6', fg: '#b42318', border: '#fecaca' },
+    info: { bg: '#EFF6FF', fg: '#1E40AF', border: '#BFDBFE' },
+    success: { bg: color.positiveSoft, fg: '#0B5F44', border: '#A7E8CF' },
+    error: { bg: color.dangerSoft, fg: color.danger, border: '#FECACA' },
   };
 
-  return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f7', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#222222', padding: '0 16px 60px', width: '100%', boxSizing: 'border-box' }}>
+  const navBtn = {
+    background: 'transparent', border: 'none', color: color.body,
+    padding: '8px 10px', fontSize: size.sm, fontWeight: 550,
+    cursor: 'pointer', fontFamily: font.sans, borderRadius: radius.sm,
+    whiteSpace: 'nowrap',
+  };
 
-      {/* Host Bar */}
-      <header style={{ maxWidth: 520, margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 72, borderBottom: '1px solid #ebebeb' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ width: 24, height: 24, borderRadius: 6, background: '#E00B41', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="3" y="4" width="18" height="16" rx="2" />
-            </svg>
+  // Small uppercase heading used at the top of each dashboard panel.
+  const panelHead = { ...eyebrow, fontSize: 11, marginBottom: space[4], display: 'block' };
+
+  const balanceTone = !deskReady || remainingTokens === null
+    ? { fg: color.muted, bg: '#F1F5F9' }
+    : remainingTokens <= 100
+      ? { fg: color.danger, bg: color.dangerSoft }
+      : { fg: color.positive, bg: color.positiveSoft };
+
+  return (
+    <div style={{
+      minHeight: '100vh', background: color.page, fontFamily: font.sans,
+      color: color.body, width: '100%', boxSizing: 'border-box',
+      display: 'flex', flexDirection: 'column',
+    }}>
+
+      {/* ── Host bar ── */}
+      <header style={{
+        position: 'sticky', top: 0, zIndex: 20,
+        background: 'rgba(255,255,255,0.9)',
+        backdropFilter: 'saturate(180%) blur(12px)',
+        WebkitBackdropFilter: 'saturate(180%) blur(12px)',
+        borderBottom: `1px solid ${color.line}`,
+      }}>
+        <div style={{
+          maxWidth: 1080, margin: '0 auto', display: 'flex',
+          justifyContent: 'space-between', alignItems: 'center',
+          height: 64, padding: '0 20px', boxSizing: 'border-box',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+            <span style={{
+              width: 28, height: 28, borderRadius: 8, background: color.brand,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M7 8.5h10M7 12.5h6M7 16.5h3" />
+              </svg>
+            </span>
+            <span className="lq-logo-text" style={{
+              fontWeight: 700, fontSize: size.md, color: color.ink,
+              letterSpacing: '-0.02em', whiteSpace: 'nowrap',
+            }}>
+              Desk Manager
+            </span>
           </div>
-          <span style={{ fontWeight: 800, fontSize: 16, color: '#222222' }}>Desk Manager</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button
-            type="button"
-            onClick={() => {
-              window.history.pushState({}, '', '/contact');
-              setCurrentPage('contact');
-            }}
-            style={{ background: 'transparent', border: 'none', color: '#595959', padding: '7px 8px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
-          >
-            Contact
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              window.history.pushState({}, '', '/');
-              setCurrentPage('home');
-            }}
-            style={{ background: '#ffffff', border: '1px solid #dddddd', padding: '7px 13px', borderRadius: 999, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-          >
-            Home
-          </button>
-          {session && (
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <button
               type="button"
-              onClick={handleLogout}
-              style={{ background: 'transparent', border: 'none', color: '#595959', padding: '7px 8px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
+              onClick={() => {
+                window.history.pushState({}, '', '/contact');
+                setCurrentPage('contact');
+              }}
+              className="lq-nav-hide"
+              style={navBtn}
             >
-              Log out
+              Contact
             </button>
-          )}
+            <button
+              type="button"
+              onClick={() => {
+                window.history.pushState({}, '', '/');
+                setCurrentPage('home');
+              }}
+              className="lq-hdr-btn"
+              style={{ ...btnSecondary, padding: '8px 14px', fontSize: size.sm, marginLeft: space[2] }}
+            >
+              Home
+            </button>
+            {session && (
+              <button type="button" onClick={handleLogout} style={{ ...navBtn, marginLeft: space[1] }}>
+                Log out
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
-      <div style={{ maxWidth: 480, margin: '20px auto 0' }}>
+      <main style={{
+        maxWidth: 1080, margin: '0 auto', width: '100%', boxSizing: 'border-box',
+        padding: `${space[6]}px 20px ${space[16]}px`, flex: 1,
+      }}>
 
         {!session && (
-          <div style={{ backgroundColor: '#ffffff', borderRadius: 24, padding: '40px 20px', border: '1px solid #ebebeb', textAlign: 'center' }}>
-            <p style={{ margin: '0 0 16px', color: '#475569', fontSize: 15 }}>You’re signed out. Sign in to manage your desk.</p>
-            <button
-              type="button"
-              onClick={() => goToLogin('login')}
-              style={{ background: primaryGradient, color: '#ffffff', border: 'none', padding: '12px 24px', borderRadius: 999, fontWeight: 700, cursor: 'pointer' }}
-            >
+          <div style={{ ...panel, padding: `${space[12]}px ${space[6]}px`, textAlign: 'center', maxWidth: 460, margin: '0 auto' }}>
+            <p style={{ ...bodyText, margin: `0 0 ${space[5]}px`, fontSize: size.md }}>
+              You’re signed out. Sign in to manage your desk.
+            </p>
+            <button type="button" onClick={() => goToLogin('login')} style={btnPrimary}>
               Sign In
             </button>
           </div>
@@ -2074,128 +2282,66 @@ export default function App() {
 
         {session && (
           <>
-            {/* Logged-in Host Profile Bar */}
+            {/* ── Who's signed in ── */}
             <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              backgroundColor: '#ffffff',
-              borderRadius: 14,
-              padding: '8px 14px',
-              border: '1px solid #ebebeb',
-              boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
-              marginBottom: 12,
-              fontSize: 11
+              display: 'flex', alignItems: 'center', gap: space[2],
+              marginBottom: space[5], fontSize: size.sm, minWidth: 0,
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden' }}>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#10b981', flexShrink: 0 }} />
-                <span style={{ fontWeight: 700, color: '#222222', whiteSpace: 'nowrap' }}>
-                  {session.user?.user_metadata?.name || 'Host'}
-                </span>
-                <span style={{ color: '#d1d5db' }}>•</span>
-                <span style={{ color: '#595959', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {session.user?.email}
-                </span>
-              </div>
-
-              <div
-                title={`Full ID: ${session.user?.id || ''}`}
-                style={{
-                  fontSize: 10,
-                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                  color: '#64748b',
-                  backgroundColor: '#f8fafc',
-                  border: '1px solid #e2e8f0',
-                  padding: '2px 6px',
-                  borderRadius: 6,
-                  flexShrink: 0,
-                  marginLeft: 8,
-                  cursor: 'default'
-                }}
-              >
-                ID: {session.user?.id ? `${session.user.id.slice(0, 8)}...` : ''}
-              </div>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: color.positive, flexShrink: 0 }} />
+              <span style={{ fontWeight: 650, color: color.ink, whiteSpace: 'nowrap' }}>
+                {session.user?.user_metadata?.name || 'Host'}
+              </span>
+              <span style={{ color: color.lineStrong }}>·</span>
+              <span style={{ color: color.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {session.user?.email}
+              </span>
             </div>
 
-            {/* Token Balance Widget */}
-            <div style={{
-              backgroundColor: '#ffffff',
-              borderRadius: 20,
-              padding: '16px 20px',
-              border: '1px solid #ebebeb',
-              boxShadow: '0 4px 16px rgba(0,0,0,0.04)',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 16
-            }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#222222' }}>Remaining Calls</div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{
-                  fontSize: 18,
-                  fontWeight: 800,
-                  fontVariantNumeric: 'tabular-nums',
-                  color: !deskReady || remainingTokens === null ? '#64748b' : remainingTokens <= 100 ? '#b42318' : '#067a0b',
-                  backgroundColor: !deskReady || remainingTokens === null ? '#f1f5f9' : remainingTokens <= 100 ? '#fff8f6' : '#f0fdf4',
-                  padding: '6px 12px',
-                  borderRadius: 999,
-                  minWidth: 44,
-                  textAlign: 'center'
-                }}>
-                  {deskReady && remainingTokens !== null ? remainingTokens.toLocaleString('en-IN') : '...'}
-                </div>
+            {/* ── Notices ── */}
+            {deskReady && isLowBalance && !isAccountBlocked && (
+              <div role="status" style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: space[3], background: color.warningSoft, color: color.warning,
+                border: '1px solid #FDE68A', padding: `${space[3]}px ${space[4]}px`,
+                borderRadius: radius.md, fontSize: size.base, marginBottom: space[5],
+                flexWrap: 'wrap',
+              }}>
+                <span>Only <strong>{remainingTokens}</strong> calls left. Recharge now so your desk doesn’t stop mid-clinic.</span>
                 <button
                   type="button"
                   onClick={openRecharge}
-                  disabled={!deskReady}
-                  style={{
-                    background: primaryGradient,
-                    color: '#ffffff',
-                    border: 'none',
-                    padding: '8px 14px',
-                    borderRadius: 999,
-                    fontSize: 13,
-                    fontWeight: 700,
-                    cursor: deskReady ? 'pointer' : 'not-allowed',
-                    opacity: deskReady ? 1 : 0.6,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    boxShadow: '0 2px 8px rgba(255, 56, 92, 0.25)'
-                  }}
+                  style={{ ...btnPrimary, background: color.warning, boxShadow: 'none', padding: '8px 14px', fontSize: size.sm, flexShrink: 0 }}
                 >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <line x1="12" y1="5" x2="12" y2="19"></line>
-                    <line x1="5" y1="12" x2="19" y2="12"></line>
-                  </svg>
-                  Recharge
-                </button>
-              </div>
-            </div>
-
-            {/* Low balance warning */}
-            {deskReady && isLowBalance && !isAccountBlocked && (
-              <div role="status" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, backgroundColor: '#fffbeb', color: '#92400e', border: '1px solid #fde68a', padding: '12px 16px', borderRadius: 14, fontSize: 13, marginBottom: 16 }}>
-                <span>Only <strong>{remainingTokens}</strong> calls left. Recharge now so your desk doesn’t stop mid-clinic.</span>
-                <button type="button" onClick={openRecharge} style={{ background: '#92400e', color: '#ffffff', border: 'none', borderRadius: 999, padding: '6px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}>
                   Recharge
                 </button>
               </div>
             )}
 
             {deskReady && isAccountBlocked && (
-              <div role="alert" style={{ backgroundColor: '#fff8f6', color: '#b42318', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 14, fontSize: 13, marginBottom: 16 }}>
+              <div role="alert" style={{
+                background: color.dangerSoft, color: color.danger, border: '1px solid #FECACA',
+                padding: `${space[3]}px ${space[4]}px`, borderRadius: radius.md,
+                fontSize: size.base, marginBottom: space[5], lineHeight: 1.55,
+              }}>
                 This account is paused, so calling is turned off. Please contact LiveQueue support on WhatsApp.
               </div>
             )}
 
             {adminError && (
-              <div role="alert" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, backgroundColor: '#fff8f6', color: '#b42318', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: 14, fontSize: 13, marginBottom: 16 }}>
+              <div role="alert" style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: space[3], background: color.dangerSoft, color: color.danger,
+                border: '1px solid #FECACA', padding: `${space[3]}px ${space[4]}px`,
+                borderRadius: radius.md, fontSize: size.base, marginBottom: space[5],
+                flexWrap: 'wrap',
+              }}>
                 <span>{adminError}</span>
                 {deskFailed && (
-                  <button type="button" onClick={() => loadDesk(session.user.id)} style={{ background: '#b42318', color: '#ffffff', border: 'none', borderRadius: 999, padding: '6px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    onClick={() => loadDesk(session.user.id)}
+                    style={{ ...btnPrimary, background: color.danger, boxShadow: 'none', padding: '8px 14px', fontSize: size.sm, flexShrink: 0 }}
+                  >
                     Retry
                   </button>
                 )}
@@ -2204,257 +2350,298 @@ export default function App() {
 
             {!deskReady && !deskFailed && (
               <div style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 24,
-                padding: '48px 20px',
-                border: '1px solid #ebebeb',
-                textAlign: 'center',
-                color: '#64748b',
-                fontSize: 14,
-                fontWeight: 500,
-                marginBottom: 16
+                ...panel, padding: `${space[16]}px ${space[5]}px`, textAlign: 'center',
+                color: color.muted, fontSize: size.base, fontWeight: 550,
               }}>
                 Loading your desk…
               </div>
             )}
 
-            {/* Counter Action Card */}
             {deskReady && (
-              <div style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 24,
-                padding: '28px 20px',
-                border: '1px solid #ebebeb',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.06)',
-                textAlign: 'center',
-                marginBottom: 16
-              }}>
-                {isEditing ? (
-                  <form onSubmit={saveDetails} style={{ textAlign: 'left', marginBottom: 20 }}>
-                    <div style={{ marginBottom: 12 }}>
-                      <label htmlFor="edit-title" style={fieldLabel}>Counter Name</label>
-                      <input
-                        id="edit-title"
-                        type="text"
-                        required
-                        maxLength={TITLE_MAX}
-                        placeholder="e.g. Dr. Adam"
-                        value={editTitle}
-                        onChange={e => setEditTitle(e.target.value)}
-                        style={fieldInput}
-                      />
-                    </div>
+              <div className="lq-dash-grid">
 
-                    <div style={{ marginBottom: 12 }}>
-                      <label htmlFor="edit-subtitle" style={fieldLabel}>Subtitle / Room</label>
-                      <input
-                        id="edit-subtitle"
-                        type="text"
-                        maxLength={SUBTITLE_MAX}
-                        placeholder="e.g. Room 2 · General Medicine"
-                        value={editSubtitle}
-                        onChange={e => setEditSubtitle(e.target.value)}
-                        style={fieldInput}
-                      />
-                    </div>
+                {/* ══ LEFT: the control the host actually uses ══ */}
+                <section style={{ ...panel, padding: space[6], boxShadow: shadow.md }}>
+                  {isEditing ? (
+                    <form onSubmit={saveDetails}>
+                      <span style={panelHead}>Desk details</span>
 
-                    <div style={{ marginBottom: 16 }}>
-                      <label htmlFor="edit-slug" style={fieldLabel}>Public Link</label>
-                      <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #b0b0b0', borderRadius: 10, padding: '0 12px' }}>
-                        <span style={{ color: '#595959', fontSize: 14 }}>/</span>
+                      <div style={{ marginBottom: space[4] }}>
+                        <label htmlFor="edit-title" style={fieldLabel}>Counter Name</label>
                         <input
-                          id="edit-slug"
+                          id="edit-title"
                           type="text"
-                          autoCapitalize="none"
-                          autoCorrect="off"
-                          maxLength={60}
-                          value={editSlug}
-                          onChange={e => setEditSlug(e.target.value)}
-                          style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', padding: '10px 6px', fontSize: 14, background: '#ffffff', color: '#222222' }}
+                          required
+                          maxLength={TITLE_MAX}
+                          placeholder="e.g. Dr. Adam"
+                          value={editTitle}
+                          onChange={e => setEditTitle(e.target.value)}
+                          style={fieldInput}
                         />
                       </div>
-                      <div style={{ fontSize: 12, color: '#595959', marginTop: 4 }}>
-                        English letters, numbers and hyphens. Will be saved as <strong>/{normalizeSlug(editSlug) || '…'}</strong>
-                      </div>
-                    </div>
 
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button
-                        type="submit"
-                        style={{ flex: 1, padding: 11, background: '#222222', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer' }}
-                      >
-                        Save Changes
-                      </button>
+                      <div style={{ marginBottom: space[4] }}>
+                        <label htmlFor="edit-subtitle" style={fieldLabel}>Subtitle / Room</label>
+                        <input
+                          id="edit-subtitle"
+                          type="text"
+                          maxLength={SUBTITLE_MAX}
+                          placeholder="e.g. Room 2 · General Medicine"
+                          value={editSubtitle}
+                          onChange={e => setEditSubtitle(e.target.value)}
+                          style={fieldInput}
+                        />
+                      </div>
+
+                      <div style={{ marginBottom: space[5] }}>
+                        <label htmlFor="edit-slug" style={fieldLabel}>Public Link</label>
+                        <div style={{
+                          display: 'flex', alignItems: 'center',
+                          border: `1px solid ${color.lineStrong}`, borderRadius: radius.md,
+                          padding: '0 12px', background: color.surface,
+                        }}>
+                          <span style={{ color: color.faint, fontSize: size.md }}>/</span>
+                          <input
+                            id="edit-slug"
+                            type="text"
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            maxLength={60}
+                            value={editSlug}
+                            onChange={e => setEditSlug(e.target.value)}
+                            style={{
+                              flex: 1, minWidth: 0, border: 'none', outline: 'none',
+                              padding: '13px 6px', fontSize: size.md, background: color.surface,
+                              color: color.ink, fontFamily: font.sans,
+                            }}
+                          />
+                        </div>
+                        <div style={{ fontSize: size.sm, color: color.muted, marginTop: space[2] }}>
+                          English letters, numbers and hyphens. Will be saved as <strong>/{normalizeSlug(editSlug) || '…'}</strong>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: space[2] }}>
+                        <button type="submit" style={{ ...btnDark, flex: 1, borderRadius: radius.md }}>
+                          Save Changes
+                        </button>
+                        <button type="button" onClick={cancelEditing} style={{ ...btnSecondary, borderRadius: radius.md }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <>
+                      <div style={{
+                        display: 'flex', alignItems: 'flex-start',
+                        justifyContent: 'space-between', gap: space[3],
+                      }}>
+                        <div style={{ minWidth: 0 }}>
+                          <h2 style={{
+                            fontSize: size.xl, fontWeight: 750, margin: 0,
+                            letterSpacing: '-0.022em', color: color.ink, overflowWrap: 'anywhere',
+                          }}>
+                            {queue.queue_title}
+                          </h2>
+                          <div style={{ color: color.muted, fontSize: size.base, marginTop: 2, overflowWrap: 'anywhere' }}>
+                            {queue.queue_subtitle}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={startEditing}
+                          style={{ ...btnSecondary, padding: '8px 14px', fontSize: size.sm, flexShrink: 0 }}
+                        >
+                          Edit name &amp; link
+                        </button>
+                      </div>
+
+                      {/* ── Current token ── */}
+                      <div style={{
+                        margin: `${space[6]}px 0`,
+                        padding: `${space[6]}px ${space[4]}px`,
+                        background: color.raised,
+                        border: `1px solid ${color.line}`,
+                        borderRadius: radius.md,
+                        textAlign: 'center',
+                      }}>
+                        <span style={{ ...eyebrow, fontSize: 11 }}>Current Token</span>
+                        <div
+                          className="lq-num"
+                          aria-live="polite"
+                          style={{
+                            fontSize: 'clamp(3.4rem, 13vw, 5.5rem)',
+                            fontWeight: 800,
+                            lineHeight: 1.02,
+                            margin: `${space[2]}px 0 0`,
+                            color: color.ink,
+                            letterSpacing: '-0.04em',
+                            opacity: busy ? 0.45 : 1,
+                            transition: 'opacity 0.15s',
+                          }}
+                        >
+                          {queue.queue_position === 0 ? '—' : queue.queue_position}
+                        </div>
+                      </div>
+
+                      {/* ── Calling actions ── */}
+                      <div style={{ display: 'flex', gap: space[3] }}>
+                        <button
+                          type="button"
+                          onClick={previousQueue}
+                          disabled={busy || queue.queue_position <= 0 || isAccountBlocked}
+                          title="Go back one token. The call is refunded only if you undo within 2 minutes."
+                          style={{
+                            ...btnSecondary,
+                            flex: 1,
+                            padding: '16px 10px',
+                            borderRadius: radius.md,
+                            fontSize: size.base,
+                            whiteSpace: 'nowrap',
+                            background: busy || queue.queue_position <= 0 || isAccountBlocked ? color.page : color.surface,
+                            color: busy || queue.queue_position <= 0 || isAccountBlocked ? color.faint : color.ink,
+                            cursor: busy || queue.queue_position <= 0 || isAccountBlocked ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          -1 Previous
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={isOutOfCalls && !isAccountBlocked ? openRecharge : advanceQueue}
+                          disabled={busy || isAccountBlocked}
+                          style={{
+                            ...btnPrimary,
+                            flex: 2,
+                            padding: '16px 12px',
+                            borderRadius: radius.md,
+                            fontSize: size.lg,
+                            whiteSpace: 'nowrap',
+                            background: isAccountBlocked ? '#E2E8F0' : isOutOfCalls ? color.ink : color.brand,
+                            color: isAccountBlocked ? color.muted : '#FFFFFF',
+                            boxShadow: isBlocked ? 'none' : shadow.brand,
+                            cursor: busy ? 'wait' : isAccountBlocked ? 'not-allowed' : 'pointer',
+                            opacity: busy ? 0.75 : 1,
+                          }}
+                        >
+                          {isAccountBlocked ? 'Account Paused' : isOutOfCalls ? 'No calls left · Recharge' : busy ? 'Calling…' : '+1 Next Token'}
+                        </button>
+                      </div>
+
+                      <div style={{ textAlign: 'center', marginTop: space[4] }}>
+                        <button
+                          type="button"
+                          onClick={resetQueue}
+                          disabled={busy || isAccountBlocked}
+                          style={{
+                            background: 'none', border: 'none', color: color.muted,
+                            fontSize: size.sm, cursor: 'pointer', textDecoration: 'underline',
+                            fontFamily: font.sans, padding: space[1],
+                          }}
+                        >
+                          Reset count back to 0
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </section>
+
+                {/* ══ RIGHT: balance and the patient-facing screen ══ */}
+                <div style={{ display: 'grid', gap: space[5] }}>
+
+                  {/* ── Balance ── */}
+                  <section style={{ ...panel, padding: space[6] }}>
+                    <span style={panelHead}>Remaining Calls</span>
+                    <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: space[4], flexWrap: 'wrap' }}>
+                      <div>
+                        <div
+                          className="lq-num"
+                          style={{
+                            fontSize: size['3xl'], fontWeight: 800, lineHeight: 1.05,
+                            letterSpacing: '-0.03em', color: balanceTone.fg,
+                          }}
+                        >
+                          {deskReady && remainingTokens !== null ? remainingTokens.toLocaleString('en-IN') : '…'}
+                        </div>
+                        <div style={{ fontSize: size.sm, color: color.muted, marginTop: 2 }}>
+                          one call = one “+1 Next Token” tap
+                        </div>
+                      </div>
                       <button
                         type="button"
-                        onClick={cancelEditing}
-                        style={{ padding: '11px 18px', background: '#f7f7f7', border: '1px solid #dddddd', borderRadius: 10, fontWeight: 600, cursor: 'pointer' }}
+                        onClick={openRecharge}
+                        disabled={!deskReady}
+                        style={{
+                          ...btnPrimary,
+                          padding: '11px 18px',
+                          fontSize: size.base,
+                          cursor: deskReady ? 'pointer' : 'not-allowed',
+                          opacity: deskReady ? 1 : 0.6,
+                        }}
                       >
-                        Cancel
+                        <IconPlus size={16} />
+                        Recharge
                       </button>
                     </div>
-                  </form>
-                ) : (
-                  <div style={{ marginBottom: 18 }}>
-                    <h2 style={{ fontSize: 24, fontWeight: 800, margin: '0 0 4px', letterSpacing: '-0.02em', color: '#222222', overflowWrap: 'anywhere' }}>
-                      {queue.queue_title}
-                    </h2>
-                    <div style={{ color: '#595959', fontSize: 14, marginBottom: 8, overflowWrap: 'anywhere' }}>
-                      {queue.queue_subtitle}
+                  </section>
+
+                  {/* ── Public display ── */}
+                  <section style={{ ...panel, padding: space[6], textAlign: 'center' }}>
+                    <span style={panelHead}>Public display link</span>
+
+                    <div style={{ fontSize: size.base, fontWeight: 650, overflowWrap: 'anywhere', marginBottom: space[5] }}>
+                      <a href={currentPublicLink} target="_blank" rel="noreferrer" style={{ color: color.brandText, textDecoration: 'none' }}>
+                        {currentPublicLink.replace(/^https?:\/\//, '')}
+                      </a>
                     </div>
-                    <button
-                      type="button"
-                      onClick={startEditing}
-                      style={{ background: 'none', border: 'none', color: '#C8093A', fontSize: 13, fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}
-                    >
-                      Edit name & link
-                    </button>
-                  </div>
-                )}
 
-                {/* Token Big Number Display */}
-                <div style={{ padding: '20px 0', borderTop: '1px solid #f0f0f0', borderBottom: '1px solid #f0f0f0', margin: '14px 0 20px' }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, textTransform: 'uppercase', color: '#595959' }}>
-                    Current Token
-                  </span>
-                  <div aria-live="polite" style={{ fontSize: '5rem', fontWeight: 900, lineHeight: 1.1, margin: '6px 0 0', color: '#222222', letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', opacity: busy ? 0.5 : 1, transition: 'opacity 0.15s' }}>
-                    {queue.queue_position === 0 ? '—' : queue.queue_position}
-                  </div>
-                </div>
+                    <div style={{
+                      display: 'inline-block', padding: space[4], background: color.surface,
+                      border: `1px solid ${color.line}`, borderRadius: radius.md, boxShadow: shadow.xs,
+                    }}>
+                      <QRCodeSVG id="poster-qr-code" value={currentPublicLink} size={148} fgColor={color.ink} level="H" />
+                    </div>
 
-                {/* Calling Actions */}
-                <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
-                  <button
-                    type="button"
-                    onClick={previousQueue}
-                    disabled={busy || queue.queue_position <= 0 || isAccountBlocked}
-                    title="Go back one token. The call is refunded only if you undo within 2 minutes."
-                    style={{
-                      flex: 1,
-                      padding: 15,
-                      fontSize: 15,
-                      fontWeight: 600,
-                      backgroundColor: busy || queue.queue_position <= 0 || isAccountBlocked ? '#f7f7f7' : '#ffffff',
-                      color: busy || queue.queue_position <= 0 || isAccountBlocked ? '#a3a3a3' : '#222222',
-                      border: '1px solid #dddddd',
-                      borderRadius: 14,
-                      cursor: busy || queue.queue_position <= 0 || isAccountBlocked ? 'not-allowed' : 'pointer'
-                    }}
-                  >
-                    -1 Previous
-                  </button>
+                    <p style={{ fontSize: size.sm, color: color.muted, margin: `${space[3]}px 0 0` }}>
+                      Patients scan this to follow the queue on their phone.
+                    </p>
 
-                  <button
-                    type="button"
-                    onClick={isOutOfCalls && !isAccountBlocked ? openRecharge : advanceQueue}
-                    disabled={busy || isAccountBlocked}
-                    style={{
-                      flex: 2,
-                      padding: 15,
-                      fontSize: 16,
-                      fontWeight: 700,
-                      background: isAccountBlocked ? '#e2e8f0' : isOutOfCalls ? '#222222' : primaryGradient,
-                      color: isAccountBlocked ? '#64748b' : '#ffffff',
-                      border: 'none',
-                      borderRadius: 14,
-                      cursor: busy ? 'wait' : isAccountBlocked ? 'not-allowed' : 'pointer',
-                      boxShadow: isBlocked ? 'none' : '0 4px 14px rgba(255, 56, 92, 0.3)',
-                      opacity: busy ? 0.75 : 1
-                    }}
-                  >
-                    {isAccountBlocked ? 'Account Paused' : isOutOfCalls ? 'No calls left · Recharge' : busy ? 'Calling…' : '+1 Next Token'}
-                  </button>
-                </div>
+                    <div style={{ display: 'grid', gap: space[3], marginTop: space[5] }}>
+                      <a
+                        href={currentPublicLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ ...btnDark, width: '100%', fontSize: size.base }}
+                      >
+                        <IconExternal size={16} />
+                        Launch TV Display Screen
+                      </a>
 
-                <button
-                  type="button"
-                  onClick={resetQueue}
-                  disabled={busy || isAccountBlocked}
-                  style={{ background: 'none', border: 'none', color: '#595959', fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}
-                >
-                  Reset count back to 0
-                </button>
-              </div>
-            )}
-
-            {/* Public Display Card */}
-            {deskReady && (
-              <div style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 24,
-                padding: '24px 20px',
-                border: '1px solid #ebebeb',
-                boxShadow: '0 4px 16px rgba(0,0,0,0.04)',
-                textAlign: 'center'
-              }}>
-                <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: '#595959' }}>
-                  Public Display Link
-                </span>
-                <div style={{ margin: '6px 0 16px', fontSize: 15, fontWeight: 700, overflowWrap: 'anywhere' }}>
-                  <a href={currentPublicLink} target="_blank" rel="noreferrer" style={{ color: '#C8093A', textDecoration: 'none' }}>
-                    {currentPublicLink.replace(/^https?:\/\//, '')}
-                  </a>
-                </div>
-
-                {/* Render QR code */}
-                <div style={{ display: 'inline-block', padding: 14, backgroundColor: '#ffffff', border: '1px solid #ebebeb', borderRadius: 16, boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }}>
-                  <QRCodeSVG id="poster-qr-code" value={currentPublicLink} size={150} fgColor="#222222" level="H" />
-                </div>
-
-                {/* Action Buttons: TV Launch + Print/PDF Download */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
-                  <a
-                    href={currentPublicLink}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{
-                      display: 'block',
-                      background: '#222222',
-                      color: '#ffffff',
-                      padding: '12px 20px',
-                      borderRadius: 999,
-                      textDecoration: 'none',
-                      fontSize: 14,
-                      fontWeight: 600
-                    }}
-                  >
-                    Launch TV Display Screen ↗
-                  </a>
-
-                  <button
-                    type="button"
-                    onClick={handlePrintPoster}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 8,
-                      background: '#fff1f2',
-                      color: '#C8093A',
-                      border: '1.5px solid #fecdd3',
-                      padding: '11px 20px',
-                      borderRadius: 999,
-                      fontSize: 13,
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      boxShadow: '0 2px 6px rgba(255, 56, 92, 0.08)'
-                    }}
-                  >
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                      <polyline points="7 10 12 15 17 10"></polyline>
-                      <line x1="12" y1="15" x2="12" y2="3"></line>
-                    </svg>
-                    Print Poster / Save as PDF
-                  </button>
+                      <button
+                        type="button"
+                        onClick={handlePrintPoster}
+                        style={{
+                          ...btnSecondary,
+                          width: '100%',
+                          fontSize: size.base,
+                          background: color.brandSoft,
+                          color: color.brandText,
+                          borderColor: color.brandSoftBorder,
+                        }}
+                      >
+                        <IconDownload size={16} />
+                        Print Poster / Save as PDF
+                      </button>
+                    </div>
+                  </section>
                 </div>
               </div>
             )}
           </>
         )}
-      </div>
+      </main>
 
-      {/* RECHARGE MODAL */}
+      {/* ── RECHARGE MODAL ── */}
       {isRechargeOpen && (
         <div
           role="dialog"
@@ -2462,54 +2649,63 @@ export default function App() {
           aria-labelledby="recharge-title"
           onKeyDown={(e) => { if (e.key === 'Escape') closeRecharge(); }}
           style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.45)',
+            position: 'fixed', inset: 0,
+            background: 'rgba(11, 18, 32, 0.5)',
             backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 16,
-            zIndex: 1000
+            WebkitBackdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16, zIndex: 1000,
           }}
         >
           <div style={{
-            backgroundColor: '#ffffff',
-            borderRadius: 24,
-            padding: 24,
+            background: color.surface,
+            borderRadius: radius.xl,
+            padding: space[6],
             maxWidth: 440,
             width: '100%',
-            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.2)',
-            border: '1px solid #ebebeb',
-            textAlign: 'left'
+            boxShadow: '0 24px 60px rgba(11, 18, 32, 0.28)',
+            border: `1px solid ${color.line}`,
+            textAlign: 'left',
+            boxSizing: 'border-box',
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>
-              <div style={{ textAlign: 'left' }}>
-                <h3 id="recharge-title" style={{ fontSize: 18, fontWeight: 800, margin: 0, color: '#222222', textAlign: 'left' }}>Recharge Calls</h3>
-                <p style={{ fontSize: 12, color: '#595959', margin: '3px 0 0', textAlign: 'left' }}>Pick a pack. One call = one “+1 Next Token” tap.</p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: space[4], marginBottom: space[5] }}>
+              <div>
+                <h3 id="recharge-title" style={{ fontSize: size.xl, fontWeight: 750, margin: 0, color: color.ink, letterSpacing: '-0.02em' }}>
+                  Recharge Calls
+                </h3>
+                <p style={{ fontSize: size.sm, color: color.muted, margin: `${space[1]}px 0 0` }}>
+                  Pick a pack. One call = one “+1 Next Token” tap.
+                </p>
               </div>
               <button
                 type="button"
                 aria-label="Close recharge"
                 onClick={closeRecharge}
                 disabled={isProcessing}
-                style={{ background: 'none', border: 'none', fontSize: 20, color: '#595959', cursor: isProcessing ? 'not-allowed' : 'pointer', padding: 4, lineHeight: 1 }}
+                style={{
+                  background: 'none', border: 'none', fontSize: 20, color: color.muted,
+                  cursor: isProcessing ? 'not-allowed' : 'pointer', padding: 4, lineHeight: 1, flexShrink: 0,
+                }}
               >
                 ✕
               </button>
             </div>
 
             {packsError && (
-              <div role="alert" style={{ backgroundColor: '#fff8f6', color: '#b42318', border: '1px solid #fecaca', padding: '10px 14px', borderRadius: 12, fontSize: 13, marginBottom: 12 }}>
+              <div role="alert" style={{
+                background: color.dangerSoft, color: color.danger, border: '1px solid #FECACA',
+                padding: `${space[3]}px ${space[4]}px`, borderRadius: radius.sm,
+                fontSize: size.base, marginBottom: space[3],
+              }}>
                 {packsError}
               </div>
             )}
 
             {!packs && !packsError && (
-              <p style={{ fontSize: 13, color: '#595959', margin: '8px 0' }}>Loading packs…</p>
+              <p style={{ fontSize: size.base, color: color.muted, margin: `${space[2]}px 0` }}>Loading packs…</p>
             )}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'grid', gap: space[3] }}>
               {(packs || []).map(pack => (
                 <button
                   type="button"
@@ -2520,58 +2716,67 @@ export default function App() {
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
+                    gap: space[4],
                     width: '100%',
-                    padding: '14px 16px',
-                    borderRadius: 16,
-                    border: '1.5px solid #ebebeb',
-                    backgroundColor: '#fafafa',
+                    padding: `${space[4]}px ${space[5]}px`,
+                    borderRadius: radius.md,
+                    border: `1px solid ${color.line}`,
+                    background: color.raised,
                     cursor: isProcessing ? 'wait' : 'pointer',
-                    transition: 'all 0.15s ease',
+                    transition: 'border-color .15s ease, background-color .15s ease',
                     font: 'inherit',
+                    fontFamily: font.sans,
                     color: 'inherit',
-                    textAlign: 'left'
+                    textAlign: 'left',
+                    boxSizing: 'border-box',
                   }}
                 >
-                  <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 15, fontWeight: 800, color: '#222222' }}>
+                  <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: 0 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: space[2], flexWrap: 'wrap' }}>
+                      <span className="lq-num" style={{ fontSize: size.md, fontWeight: 750, color: color.ink }}>
                         {pack.tokens.toLocaleString('en-IN')} Calls
                       </span>
                       {pack.tag && (
                         <span style={{
-                          fontSize: 10,
-                          fontWeight: 700,
-                          textTransform: 'uppercase',
-                          color: '#C8093A',
-                          backgroundColor: '#ffeef1',
-                          padding: '2px 8px',
-                          borderRadius: 999
+                          fontSize: 10, fontWeight: 750, textTransform: 'uppercase',
+                          letterSpacing: '0.06em', color: color.brandText,
+                          background: color.brandSoft, border: `1px solid ${color.brandSoftBorder}`,
+                          padding: '2px 8px', borderRadius: radius.pill,
                         }}>
                           {pack.tag}
                         </span>
                       )}
                     </span>
-                    <span style={{ fontSize: 12, color: '#595959', marginTop: 2, textAlign: 'left' }}>
+                    <span style={{ fontSize: size.sm, color: color.muted, marginTop: 2 }}>
                       {pack.name} Pack
                     </span>
                   </span>
 
-                  <span style={{ textAlign: 'right' }}>
-                    <span style={{ display: 'block', fontSize: 17, fontWeight: 800, color: '#222222' }}>{formatInr(pack.price_paise)}</span>
-                    <span style={{ display: 'block', fontSize: 11, color: '#64748b' }}>One-time</span>
+                  <span style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <span className="lq-num" style={{ display: 'block', fontSize: size.lg, fontWeight: 800, color: color.ink, letterSpacing: '-0.02em' }}>
+                      {formatInr(pack.price_paise)}
+                    </span>
+                    <span style={{ display: 'block', fontSize: size.xs, color: color.faint }}>One-time</span>
                   </span>
                 </button>
               ))}
             </div>
 
             {isProcessing && !paymentNotice && (
-              <p style={{ textAlign: 'center', fontSize: 13, color: '#C8093A', fontWeight: 600, margin: '14px 0 0' }}>
+              <p style={{ textAlign: 'center', fontSize: size.base, color: color.brandText, fontWeight: 600, margin: `${space[4]}px 0 0` }}>
                 Connecting to Razorpay…
               </p>
             )}
 
             {paymentNotice && (
-              <div role="status" style={{ marginTop: 14, backgroundColor: noticeColors[paymentNotice.type].bg, color: noticeColors[paymentNotice.type].fg, border: `1px solid ${noticeColors[paymentNotice.type].border}`, padding: '10px 14px', borderRadius: 12, fontSize: 13, lineHeight: 1.45 }}>
+              <div role="status" style={{
+                marginTop: space[4],
+                background: noticeColors[paymentNotice.type].bg,
+                color: noticeColors[paymentNotice.type].fg,
+                border: `1px solid ${noticeColors[paymentNotice.type].border}`,
+                padding: `${space[3]}px ${space[4]}px`, borderRadius: radius.sm,
+                fontSize: size.base, lineHeight: 1.5,
+              }}>
                 {paymentNotice.text}
               </div>
             )}

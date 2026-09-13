@@ -2,8 +2,9 @@
    dark-mode background – was removed: it boxed the TV display into a narrow column.) */
 :root {
   color-scheme: light;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  color: #222222;
+  font-family: 'Inter var', Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  color: #334155;
   background: #ffffff;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -14,6 +15,18 @@ html,
 body {
   margin: 0;
   background: #ffffff;
+}
+
+/* Headings and the token number want tighter tracking than the default. */
+h1, h2, h3, h4 {
+  font-family: inherit;
+  text-wrap: balance;
+}
+
+/* Digits that keep their width, so the token doesn't shift as it counts up. */
+.lq-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
 }
 
 #root {
@@ -32,6 +45,25 @@ a:focus-visible,
 input:focus-visible {
   outline: 3px solid #E00B41;
   outline-offset: 2px;
+}
+
+/* Buttons and cards lift slightly on hover – enough to feel responsive, not bouncy.
+   Inline styles can't express :hover, so the few interactive states live here. */
+button:not(:disabled):hover {
+  filter: brightness(0.97);
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+input:focus {
+  border-color: #E00B41 !important;
+  box-shadow: 0 0 0 3px rgba(224, 11, 65, 0.16);
+}
+
+a {
+  color: #B00734;
 }
 
 button:disabled {
@@ -64,6 +96,46 @@ input::placeholder {
   color: #767676 !important;
   -webkit-text-fill-color: #767676 !important;
   opacity: 1 !important;
+}
+
+/* ── Responsive helpers ──
+   The app styles with inline objects, which can't express media queries, so the
+   handful of rules that must change with viewport width live here. */
+
+/* Dashboard: one column on a phone, control panel + display panel side by side
+   once there's room, so a desktop host isn't reading a narrow strip. */
+.lq-dash-grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .lq-dash-grid {
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  /* Secondary nav text that the footer and other pages already cover. */
+  .lq-nav-hide { display: none !important; }
+}
+
+@media (max-width: 470px) {
+  .lq-logo-text { font-size: 16px !important; }
+  .lq-hdr-btn { padding: 8px 13px !important; font-size: 12.5px !important; }
+}
+
+@media (max-width: 560px) {
+  /* Stack the patient's phone under the screen instead of overlapping it. */
+  .lq-preview-phone {
+    position: static !important;
+    right: auto !important;
+    bottom: auto !important;
+    margin: 18px auto 0 !important;
+  }
+  .lq-cta-btn { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

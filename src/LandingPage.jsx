@@ -78,7 +78,7 @@ const FAQS = [
   },
   {
     q: 'Can I change my clinic name or link later?',
-    a: 'Yes, both, from your desk. Changing the link retires the old one for good — it stops working, and no other clinic is ever given it, so an old poster can never show somebody else’s tokens. Print a fresh QR poster when you change it.',
+    a: 'Yes, both, from your desk. Changing the link stops the old one working straight away, so print a fresh QR poster and take the old one off the wall when you do it.',
   },
 ];
 

@@ -647,7 +647,7 @@ export default function App() {
     if (slugError) { setAdminError(slugError); return; }
 
     if (cleanSlug !== queue.slug && !window.confirm(
-      `Change your public link to /${cleanSlug}?\n\nThe old link /${queue.slug} stops working straight away, so print a new QR poster before your next OP.\n\nNobody else can ever be given the old link, so it will never show another clinic's tokens.`
+      `Change your public link to /${cleanSlug}?\n\nThe old link /${queue.slug} stops working straight away, and another clinic may take it later. Print a new QR poster and take the old one down before you change it.`
     )) return;
 
     const { data, error } = await supabase
@@ -659,7 +659,7 @@ export default function App() {
 
     if (error) {
       setAdminError(error.code === '23505'
-        ? `The link “/${cleanSlug}” isn’t available — it belongs to another desk, or it was used by one before. Please choose another.`
+        ? `The link “/${cleanSlug}” is already taken. Please choose another.`
         : friendlyError(error));
     } else {
       setQueue(data);

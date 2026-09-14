@@ -308,11 +308,6 @@ export default function App() {
       setActiveQueue(null);
       return;
     }
-    if (data.slug && data.slug !== cleanSlug) {
-      // The clinic renamed its link – keep old posters working and show the new address.
-      statusSlugRef.current = data.slug;
-      window.history.replaceState({}, '', `/${data.slug}`);
-    }
     applyPublicRow(data);
   }
 
@@ -652,7 +647,7 @@ export default function App() {
     if (slugError) { setAdminError(slugError); return; }
 
     if (cleanSlug !== queue.slug && !window.confirm(
-      `Change your public link to /${cleanSlug}?\n\nPeople using the old link /${queue.slug} will be redirected, but please print a new poster so it shows the new address.`
+      `Change your public link to /${cleanSlug}?\n\nThe old link /${queue.slug} stops working straight away, so print a new QR poster before your next OP.\n\nNobody else can ever be given the old link, so it will never show another clinic's tokens.`
     )) return;
 
     const { data, error } = await supabase
@@ -664,7 +659,7 @@ export default function App() {
 
     if (error) {
       setAdminError(error.code === '23505'
-        ? `The link “/${cleanSlug}” is already taken. Please choose another.`
+        ? `The link “/${cleanSlug}” isn’t available — it belongs to another desk, or it was used by one before. Please choose another.`
         : friendlyError(error));
     } else {
       setQueue(data);

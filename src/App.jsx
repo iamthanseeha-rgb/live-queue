@@ -2514,7 +2514,11 @@ export default function App() {
                           title="Go back one token. The call is refunded only if you undo within 2 minutes."
                           style={{
                             ...btnSecondary,
+                            // flex items default to min-width:auto, which refuses to shrink
+                            // below the text width. Without this the long "No calls left"
+                            // label on the primary button steals this one's share of the row.
                             flex: 1,
+                            minWidth: 0,
                             padding: '16px 10px',
                             borderRadius: radius.md,
                             fontSize: size.base,
@@ -2534,10 +2538,16 @@ export default function App() {
                           style={{
                             ...btnPrimary,
                             flex: 2,
+                            minWidth: 0,
                             padding: '16px 12px',
                             borderRadius: radius.md,
-                            fontSize: size.lg,
-                            whiteSpace: 'nowrap',
+                            // "No calls left · Recharge" and "Account Paused" are far longer
+                            // than "+1 Next Token". At 18px on a 360px phone they overflow the
+                            // button's share of the row, so the long labels step down a size
+                            // and are allowed to wrap onto a second line.
+                            fontSize: isOutOfCalls || isAccountBlocked ? size.base : size.lg,
+                            lineHeight: 1.25,
+                            whiteSpace: 'normal',
                             background: isAccountBlocked ? '#E2E8F0' : isOutOfCalls ? color.ink : color.brand,
                             color: isAccountBlocked ? color.muted : '#FFFFFF',
                             boxShadow: isBlocked ? 'none' : shadow.brand,
@@ -2545,7 +2555,13 @@ export default function App() {
                             opacity: busy ? 0.75 : 1,
                           }}
                         >
-                          {isAccountBlocked ? 'Account Paused' : isOutOfCalls ? 'No calls left · Recharge' : busy ? 'Calling…' : '+1 Next Token'}
+                          {/* The long states break onto two deliberate lines. Letting them
+                              wrap on their own stranded the separator at the end of line one. */}
+                          {isAccountBlocked
+                            ? 'Account Paused'
+                            : isOutOfCalls
+                              ? <>No calls left<br />Recharge</>
+                              : busy ? 'Calling…' : '+1 Next Token'}
                         </button>
                       </div>
 

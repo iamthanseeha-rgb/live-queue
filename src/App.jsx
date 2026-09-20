@@ -59,7 +59,6 @@ export default function App() {
 
   // Admin Auth state
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'signup' | 'forgot'
-  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -502,12 +501,6 @@ export default function App() {
     setAuthError('');
     setAuthSuccess('');
 
-    if (!fullName.trim()) {
-      setAuthError('Please enter your full name.');
-      setLoading(false);
-      return;
-    }
-
     if (password.length < 8) {
       setAuthError('Use at least 8 characters for your password.');
       setLoading(false);
@@ -524,7 +517,10 @@ export default function App() {
       email: email.trim(),
       password: password,
       options: {
-        data: { name: fullName.trim() },
+        // Email and password are the whole signup. A clinic's name lives on the
+        // desk itself (queue_title), which the host sets afterwards and can
+        // change, so asking for a person's name here only added a field to
+        // abandon.
         emailRedirectTo: `${window.location.origin}/`,
       },
     });
@@ -2016,23 +2012,6 @@ export default function App() {
 
                     <form onSubmit={handleSignUp}>
                       <div style={{ border: `1px solid ${color.lineStrong}`, borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
-                        <label htmlFor="signup-name" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
-                          Full Name <span style={{ color: color.brandText }}>*</span>
-                        </label>
-                        <input
-                          id="signup-name"
-                          autoComplete="name"
-                          maxLength={80}
-                          type="text"
-                          required
-                          placeholder="Dr. Adam or Clinic Host"
-                          value={fullName}
-                          onChange={e => setFullName(e.target.value)}
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 15, color: color.ink, background: '#ffffff', padding: 0 }}
-                        />
-                      </div>
-
-                      <div style={{ border: `1px solid ${color.lineStrong}`, borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
                         <label htmlFor="signup-email" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#717171', display: 'block', marginBottom: 2 }}>
                           Email Address <span style={{ color: color.brandText }}>*</span>
                         </label>
@@ -2331,11 +2310,11 @@ export default function App() {
               marginBottom: space[5], fontSize: size.sm, minWidth: 0,
             }}>
               <span style={{ width: 7, height: 7, borderRadius: '50%', background: color.positive, flexShrink: 0 }} />
-              <span style={{ fontWeight: 650, color: color.ink, whiteSpace: 'nowrap' }}>
-                {session.user?.user_metadata?.name || 'Host'}
-              </span>
-              <span style={{ color: color.lineStrong }}>·</span>
-              <span style={{ color: color.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {/* The email alone says which account this is. There used to be a
+                  name beside it, collected at signup; the account is identified
+                  by its email, so the name added a required field and nothing
+                  the host could not already see. */}
+              <span style={{ color: color.ink, fontWeight: 650, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {session.user?.email}
               </span>
             </div>

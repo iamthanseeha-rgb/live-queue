@@ -259,6 +259,28 @@ export default function App() {
     }
   }, [currentPage, activeQueue?.queue_position, activeQueue?.queue_title]);
 
+  // Canonical URL, set per route rather than in index.html. Vite serves the
+  // same index.html for every path, so a static canonical there would point
+  // every page at the home page and Google would drop the rest as duplicates.
+  // Only the pages in the sitemap get one; the dashboard, the sign-in screen
+  // and a clinic's live queue are not pages we want indexed at all.
+  useEffect(() => {
+    const INDEXABLE = ['home', 'welcome', 'contact', 'privacy', 'terms', 'refunds'];
+    let tag = document.querySelector('link[rel="canonical"]');
+    if (!INDEXABLE.includes(currentPage)) {
+      if (tag) tag.remove();
+      return;
+    }
+    if (!tag) {
+      tag = document.createElement('link');
+      tag.rel = 'canonical';
+      document.head.appendChild(tag);
+    }
+    // pathname only, so the UTM parameters on ad traffic don't fragment
+    // /welcome into a dozen separate URLs in the index.
+    tag.href = 'https://livequeue.co.in' + window.location.pathname;
+  }, [currentPage]);
+
   // Meta Pixel – an ALLOWLIST, not a denylist. It starts only on the three pages
   // that exist for hosts and prospects. The queue-search page and the waiting-room
   // display are both reachable by patients, and a slug URL renders as the search

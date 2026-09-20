@@ -20,7 +20,10 @@
     <meta property="og:description" content="Turn any TV or phone into a live token screen. Patients track their turn by scanning a QR code." />
     <meta property="og:url" content="https://livequeue.co.in/" />
     <meta name="twitter:card" content="summary" />
-    <link rel="canonical" href="https://livequeue.co.in/" />
+    <!-- No canonical tag here on purpose. The app serves this same file for
+         every route, so a hardcoded canonical would tell Google that /welcome,
+         /privacy and the rest are duplicates of the home page and should not be
+         indexed separately. App.jsx sets it per route instead. -->
     <!-- The app is one HTML file for every route, so a crawler's first fetch
          of any page sees an empty <div id="root">. Google does run the
          JavaScript, but on a second, slower pass. This block gives every

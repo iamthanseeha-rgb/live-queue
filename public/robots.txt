@@ -1,0 +1,13 @@
+# livequeue.co.in
+#
+# Without this file the catch-all rewrite in vercel.json answered /robots.txt
+# with the React app's index.html. Crawlers asking for robots.txt were handed
+# a page of HTML, and there was no sitemap reference anywhere for them to find.
+
+User-agent: *
+Allow: /
+
+# Nothing to index on the sign-in screen.
+Disallow: /login
+
+Sitemap: https://livequeue.co.in/sitemap.xml

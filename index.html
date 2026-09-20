@@ -20,9 +20,39 @@
     <meta property="og:description" content="Turn any TV or phone into a live token screen. Patients track their turn by scanning a QR code." />
     <meta property="og:url" content="https://livequeue.co.in/" />
     <meta name="twitter:card" content="summary" />
+    <link rel="canonical" href="https://livequeue.co.in/" />
+    <!-- The app is one HTML file for every route, so a crawler's first fetch
+         of any page sees an empty <div id="root">. Google does run the
+         JavaScript, but on a second, slower pass. This block gives every
+         crawler real text and real links on the first pass, and it is a plain
+         summary of what the page actually says once rendered. -->
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <h1>LiveQueue &ndash; live token display for clinics</h1>
+      <p>
+        LiveQueue shows your clinic&rsquo;s live token number on any TV, tablet or
+        phone you already own. Patients scan a QR code at your counter and watch
+        their turn from anywhere &mdash; the corridor, the car, or the shop next
+        door &mdash; so they stop crowding the reception desk asking how long is
+        left.
+      </p>
+      <p>
+        There is no token machine to buy and no app for patients to install. You
+        tap &ldquo;next token&rdquo; from the desk and every screen updates within a
+        second. Every new desk starts with 1,500 free calls, and top-ups begin at
+        &#8377;99 for 500 calls with no monthly subscription.
+      </p>
+      <ul>
+        <li><a href="/welcome">How LiveQueue works, and pricing</a></li>
+        <li><a href="/contact">Contact us</a></li>
+        <li><a href="/privacy">Privacy policy</a></li>
+        <li><a href="/terms">Terms of service</a></li>
+        <li><a href="/refunds">Refund policy</a></li>
+      </ul>
+      <p>Built for clinics and consultation desks across India.</p>
+    </noscript>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

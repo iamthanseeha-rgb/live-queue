@@ -351,10 +351,45 @@ export default function App() {
     if (currentPage !== 'status' || !activeQueue?.public_key) return;
 
     const refetch = () => fetchQueueBySlug(statusSlugRef.current);
+
+    // The broadcast is a doorbell, not a letter. This is a public Realtime
+    // channel, and its key is handed to every patient who opens the page, so
+    // anyone in the waiting room could publish on it. If we displayed what the
+    // message says, a patient could put any number or text on the clinic's TV
+    // and make it announce it. So we never read the payload: a message only
+    // means "go and ask the server", and get_public_queue answers from the
+    // database, which only call_next / call_previous / reset_queue can change.
+    //
+    // The first message fetches at once, so a real call reaches the screen after
+    // one server read and no added delay. Messages that arrive while a fetch is
+    // running, or in the short cooldown after it, are folded into one more fetch
+    // at the end, so the screen always settles on the newest number and a flood
+    // of fake messages costs a few reads a second instead of thousands.
+    //
+    // If another read (the safety poll) is already in flight, it may have left
+    // before this call was made, so it can't be trusted to carry the new number:
+    // mark it pending and read again once it finishes.
+    let pingBusy = false, pingPending = false, pingTimer = null, stopped = false;
+    const runPing = async () => {
+      pingBusy = true;
+      if (isFetchingRef.current) pingPending = true;
+      else await refetch();
+      if (stopped) return; // page left while the read was in flight
+      pingTimer = setTimeout(() => {
+        pingTimer = null;
+        if (pingPending) { pingPending = false; runPing(); }
+        else pingBusy = false;
+      }, 200);
+    };
+    const onPing = () => {
+      if (pingBusy) { pingPending = true; return; }
+      runPing();
+    };
+
     const channel = supabase
       .channel(`queue:${activeQueue.public_key}`)
-      .on('broadcast', { event: 'queue_update' }, ({ payload }) => {
-        applyPublicRow({ ...activeQueueRef.current, ...payload });
+      .on('broadcast', { event: 'queue_update' }, () => {
+        onPing();
         setDisplayStatus('live');
       })
       .subscribe((status) => {
@@ -380,7 +415,9 @@ export default function App() {
     schedule();
 
     return () => {
+      stopped = true;
       clearTimeout(timer);
+      clearTimeout(pingTimer);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
@@ -463,11 +500,18 @@ export default function App() {
     if (currentPage !== 'admin_dash' || !queue?.public_key) return;
     const uid = deskUserRef.current;
     let firstSubscribe = true;
+    let deskPingTimer = null;
     const channel = supabase
       .channel(`queue:${queue.public_key}`)
-      .on('broadcast', { event: 'queue_update' }, ({ payload }) => {
-        setQueue((q) => (q && q.queue_id === payload.queue_id ? { ...q, ...payload } : q));
-        loadDesk(uid, { silent: true }); // another device may have used a call – refresh balance
+      .on('broadcast', { event: 'queue_update' }, () => {
+        // Same rule as the public display: the message is only a prompt to ask
+        // the server (anyone who knows the key can publish on this channel).
+        // Coalesced, because each reload is a write-capable RPC.
+        if (deskPingTimer) return;
+        deskPingTimer = setTimeout(() => {
+          deskPingTimer = null;
+          loadDesk(uid, { silent: true }); // number and balance from the database
+        }, 400);
       })
       .subscribe((status) => {
         // after a reconnect, catch up on anything other devices did meanwhile
@@ -478,6 +522,7 @@ export default function App() {
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('online', onVisible);
     return () => {
+      clearTimeout(deskPingTimer);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onVisible);
       supabase.removeChannel(channel);

@@ -138,6 +138,14 @@ input::placeholder {
   .lq-cta-btn { width: 100%; }
 }
 
+/* Home search: the full "livequeue.co.in/" prefix matches the printed poster,
+   but on a narrow phone it would squeeze the input down to a few characters. */
+.lq-prefix-short { display: none; }
+@media (max-width: 480px) {
+  .lq-prefix-full { display: none !important; }
+  .lq-prefix-short { display: inline !important; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;

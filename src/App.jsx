@@ -41,6 +41,15 @@ export default function App() {
   const [inputQuery, setInputQuery] = useState('');
   const [activeQueue, setActiveQueue] = useState(null);
   const [lookupError, setLookupError] = useState('');
+  // The last clinic queue this browser opened, so a patient who comes back to
+  // the home page (a second visit, or after closing the tab) gets one tap back
+  // to it. Per-browser convenience only; nothing breaks if storage is blocked.
+  const [lastQueue, setLastQueue] = useState(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem('lq:lastQueue') || 'null');
+      return v && typeof v.slug === 'string' ? v : null;
+    } catch { return null; }
+  });
   const [displayStatus, setDisplayStatus] = useState('connecting'); // 'connecting' | 'live' | 'reconnecting'
   const [soundOn, setSoundOn] = useState(false);
   // Announcements are session-scoped on purpose: no browser will speak until someone
@@ -325,11 +334,16 @@ export default function App() {
       return;
     }
     if (!data) {
-      setLookupError(`No queue found at “/${cleanSlug}”. Check the link on the clinic’s poster.`);
+      setLookupError(`No clinic found at “/${cleanSlug}”. Check the spelling on the poster, or scan its QR code instead.`);
       setActiveQueue(null);
       return;
     }
     applyPublicRow(data);
+    if (data.slug) {
+      const remembered = { slug: data.slug, title: data.queue_title || '' };
+      setLastQueue(remembered);
+      try { localStorage.setItem('lq:lastQueue', JSON.stringify(remembered)); } catch { /* storage blocked */ }
+    }
   }
 
   // Realtime + self-healing re-sync for TVs and phones
@@ -436,7 +450,7 @@ export default function App() {
     e.preventDefault();
     const cleanSlug = normalizeSlug(inputQuery);
     if (!cleanSlug) {
-      setLookupError('Enter the link name from the clinic’s poster, e.g. dr-adam.');
+      setLookupError('Enter the link from the clinic’s poster, e.g. city-clinic.');
       return;
     }
     window.history.pushState({}, '', `/${cleanSlug}`);
@@ -1304,7 +1318,7 @@ export default function App() {
   if (currentPage === 'home') {
     return (
       <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', fontFamily: font.sans, color: color.ink, display: 'flex', flexDirection: 'column' }}>
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 24px', borderBottom: `1px solid ${color.line}` }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 80, padding: '0 clamp(14px, 4vw, 24px)', gap: 8, borderBottom: `1px solid ${color.line}` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => setCurrentPage('home')}>
             <div style={{ width: 34, height: 34, borderRadius: 10, background: color.brand, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(255, 56, 92, 0.3)' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -1314,12 +1328,12 @@ export default function App() {
                 <line x1="7" y1="16" x2="10" y2="16" />
               </svg>
             </div>
-            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: color.ink }}>
+            <span className="lq-logo-text" style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', color: color.ink }}>
               live<span style={{ color: color.brand }}>queue</span>
             </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {session ? (
               <button
                 onClick={() => {
@@ -1331,23 +1345,39 @@ export default function App() {
                 Dashboard
               </button>
             ) : (
-              <button
-                onClick={() => goToLogin('login')}
-                style={{ background: 'transparent', color: color.ink, border: `1px solid ${color.lineStrong}`, padding: '9px 16px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
-              >
-                Sign In / Sign Up
-              </button>
+              <>
+                {/* Patients never need these; a doctor who typed the domain off a
+                    postcard does. "For clinics" says who it is for, so a patient
+                    skips it without wondering whether they have to sign up. */}
+                <button
+                  onClick={() => goToLogin('login')}
+                  className="lq-hdr-btn"
+                  style={{ background: 'transparent', color: color.ink, border: 'none', padding: '9px 10px', fontWeight: 600, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  Sign in
+                </button>
+                <button
+                  onClick={() => {
+                    window.history.pushState({}, '', '/welcome');
+                    setCurrentPage('welcome');
+                  }}
+                  className="lq-hdr-btn"
+                  style={{ background: 'transparent', color: color.ink, border: `1px solid ${color.lineStrong}`, padding: '9px 16px', borderRadius: 999, fontWeight: 600, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  For clinics
+                </button>
+              </>
             )}
           </div>
         </header>
 
-        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px 80px' }}>
-          <div style={{ textAlign: 'center', maxWidth: 680, marginBottom: 36 }}>
-            <h1 style={{ fontSize: 'clamp(2.1rem, 5vw, 3.6rem)', fontWeight: 800, margin: '0 0 14px', letterSpacing: '-0.02em', lineHeight: 1.15, color: color.ink }}>
-              Track any queue,<br />live in real-time.
+        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 20px 56px' }}>
+          <div style={{ textAlign: 'center', maxWidth: 680, marginBottom: 32 }}>
+            <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.4rem)', fontWeight: 800, margin: '0 0 14px', letterSpacing: '-0.02em', lineHeight: 1.15, color: color.ink }}>
+              Check your token number, live.
             </h1>
-            <p style={{ fontSize: 16, color: '#717171', margin: 0, fontWeight: 400, lineHeight: 1.5 }}>
-              Enter the custom counter link provided by your clinic, desk, or business.
+            <p style={{ fontSize: 16, color: '#717171', margin: '0 auto', fontWeight: 400, lineHeight: 1.5, maxWidth: 480 }}>
+              Type the link from your clinic’s QR poster, or just scan the code with your phone camera.
             </p>
           </div>
 
@@ -1366,7 +1396,10 @@ export default function App() {
               }}
             >
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                <span style={{ color: color.muted, fontSize: 18, fontWeight: 500, marginRight: 2, userSelect: 'none' }}>/</span>
+                {/* Mirrors how the link is printed on the poster, so patients see
+                    the part they need to type. Collapses to "/" on narrow phones. */}
+                <span aria-hidden="true" className="lq-prefix-full" style={{ color: color.muted, fontSize: 15, fontWeight: 500, marginRight: 1, userSelect: 'none', whiteSpace: 'nowrap' }}>livequeue.co.in/</span>
+                <span aria-hidden="true" className="lq-prefix-short" style={{ color: color.muted, fontSize: 18, fontWeight: 500, marginRight: 2, userSelect: 'none' }}>/</span>
                 <input
                   id="queue-search"
                   type="text"
@@ -1375,7 +1408,7 @@ export default function App() {
                   autoCorrect="off"
                   maxLength={200}
                   required
-                  placeholder="dr-adam or room-1"
+                  placeholder="city-clinic"
                   value={inputQuery}
                   onChange={e => setInputQuery(e.target.value)}
                   style={{ border: 'none', outline: 'none', fontSize: 16, color: color.ink, background: '#ffffff', fontWeight: 500, width: '100%', padding: 0 }}
@@ -1414,7 +1447,68 @@ export default function App() {
                 {lookupError}
               </div>
             )}
+
+            {lastQueue && (
+              <div style={{ marginTop: 16, textAlign: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.history.pushState({}, '', `/${lastQueue.slug}`);
+                    setCurrentPage('status');
+                    fetchQueueBySlug(lastQueue.slug);
+                  }}
+                  style={{ background: color.brandSoft, color: color.brandText, border: `1px solid ${color.brandSoftBorder}`, borderRadius: 999, padding: '8px 16px', fontSize: 14, fontWeight: 600, cursor: 'pointer', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                >
+                  Back to {lastQueue.title || `/${lastQueue.slug}`} →
+                </button>
+              </div>
+            )}
           </div>
+
+          {/* ── For clinics ──
+              Most visitors who type the bare domain are not patients (patients
+              arrive by QR, straight onto their clinic's page). They are doctors
+              who saw a postcard, an ad or a search result, so this page has to
+              tell them what LiveQueue is and where to start. */}
+          <section
+            aria-labelledby="for-clinics-heading"
+            style={{
+              width: '100%', maxWidth: 540, marginTop: 56, boxSizing: 'border-box',
+              background: color.page, border: `1px solid ${color.line}`, borderRadius: 20,
+              padding: '24px 24px 22px', textAlign: 'left',
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: color.brandText, marginBottom: 8 }}>
+              For clinics
+            </div>
+            <h2 id="for-clinics-heading" style={{ fontSize: 20, fontWeight: 750, margin: '0 0 8px', color: color.ink, letterSpacing: '-0.01em' }}>
+              Show your live token number on any TV or phone.
+            </h2>
+            <p style={{ fontSize: 15, color: '#5a6b85', margin: '0 0 18px', lineHeight: 1.55 }}>
+              No token machine to buy. Patients scan a QR code and wait anywhere instead of crowding your counter. 1,500 calls free, no card needed.
+            </p>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={() => goToLogin('signup')}
+                className="lq-cta-btn"
+                style={{ ...btnPrimary, padding: '12px 20px', fontSize: 15 }}
+              >
+                Create your free desk →
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  window.history.pushState({}, '', '/welcome');
+                  setCurrentPage('welcome');
+                }}
+                className="lq-cta-btn"
+                style={{ background: 'none', border: 'none', color: color.ink, fontWeight: 600, fontSize: 15, cursor: 'pointer', padding: '12px 8px', textDecoration: 'underline', textUnderlineOffset: 3 }}
+              >
+                See how it works
+              </button>
+            </div>
+          </section>
         </main>
 
         <footer style={{
@@ -2632,6 +2726,37 @@ export default function App() {
                         {currentPublicLink.replace(/^https?:\/\//, '')}
                       </a>
                     </div>
+
+                    {/* Every new desk starts on an automatic link like desk-a3f9c1.
+                        Patients can scan that, but nobody can say it or remember
+                        it, so the home-page search is useless for this clinic
+                        until it has a real name. Nudge before the poster goes up. */}
+                    {/^desk-[a-z0-9]{6}$/.test(queue?.slug || '') && !isEditing && (
+                      <div style={{
+                        margin: `-${space[2]}px 0 ${space[5]}px`, padding: `${space[3]}px ${space[4]}px`,
+                        background: color.warningSoft, color: color.warning, border: '1px solid #FDE68A',
+                        borderRadius: radius.md, fontSize: size.sm, lineHeight: 1.5, textAlign: 'left',
+                      }}>
+                        This is an automatic link. Give it a name patients can remember, like <strong style={{ whiteSpace: 'nowrap' }}>/city-clinic</strong>, before you print your poster.{' '}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            startEditing();
+                            // The form opens in the left panel, which on a phone is
+                            // a screen or two above this notice.
+                            setTimeout(() => {
+                              const el = document.getElementById('edit-slug');
+                              el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              el?.focus({ preventScroll: true });
+                              el?.select();
+                            }, 50);
+                          }}
+                          style={{ background: 'none', border: 'none', padding: 0, color: 'inherit', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', fontSize: 'inherit' }}
+                        >
+                          Rename link
+                        </button>
+                      </div>
+                    )}
 
                     <div style={{
                       display: 'inline-block', padding: space[4], background: color.surface,

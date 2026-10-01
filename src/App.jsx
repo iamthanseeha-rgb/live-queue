@@ -6,6 +6,7 @@ import LandingPage from './LandingPage';
 import { normalizeSlug, validateSlug, safeDecode } from './lib/slug';
 import { announceToken, primeSpeech, speechSupported, stopSpeaking } from './lib/speech';
 import { initPixel, trackViewContent, trackSignUp, trackPurchase } from './lib/pixel';
+import { initGoogleAds, trackAdsSignUp, trackAdsPurchase } from './lib/gtag';
 import {
   color, font, size, space, radius, shadow,
   panel, btnPrimary, btnSecondary, btnDark, input as inputStyle, label as labelStyle,
@@ -298,6 +299,9 @@ export default function App() {
     if (!name) return;
     initPixel();
     trackViewContent(name);
+    // Google Ads rides the same allowlist: marketing pages only, never a
+    // patient's screen. See lib/gtag.js.
+    initGoogleAds();
   }, [currentPage]);
 
   // ── Public display ───────────────────────────────────────
@@ -596,6 +600,7 @@ export default function App() {
       // to check who has an account.
       setSignupStep('link_sent');
       trackSignUp();
+      trackAdsSignUp();
     }
   }
 
@@ -855,6 +860,7 @@ export default function App() {
           if (typeof result.remaining_tokens === 'number') setRemainingTokens(result.remaining_tokens);
           setPaymentNotice({ type: 'success', text: `${pack.tokens.toLocaleString('en-IN')} calls added to your balance.` });
           trackPurchase(pack.price_paise / 100, `${pack.name} Pack`);
+          trackAdsPurchase(pack.price_paise / 100);
         }
         setIsProcessing(false);
       },
@@ -1797,9 +1803,9 @@ export default function App() {
             <p>We do not sell, rent, or trade your personal data. Apart from the infrastructure required to run the service — Supabase (authentication and database) and Razorpay (payments) — the only data we share is the limited website-usage information described in section 5.</p>
 
             <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>5. Advertising &amp; Website Measurement</h3>
-            <p>Our marketing pages — the advertising landing page at livequeue.co.in/welcome, the sign-in and sign-up pages, and the host dashboard — load the Meta Pixel. It tells Meta Platforms Ireland Limited when a page was viewed, when a host account was created, and when a recharge was completed, so that we can measure our Facebook and Instagram advertising and show our ads to clinics likely to find LiveQueue useful. Meta receives technical information such as your IP address, browser type and the page address.</p>
-            <p><strong>The public queue display pages carry no advertising or analytics tracking of any kind.</strong> If you are a patient who scanned a QR code to follow a clinic&rsquo;s queue, nothing about your visit is sent to Meta or to any advertising network. We consider a waiting room to be the wrong place for marketing technology, and we have deliberately excluded those pages.</p>
-            <p>You can limit this through your browser&rsquo;s privacy settings, an ad or tracker blocker, or Meta&rsquo;s own ad preferences.</p>
+            <p>Our marketing pages — the advertising landing page at livequeue.co.in/welcome, the sign-in and sign-up pages, and the host dashboard — load the Meta Pixel and the Google Ads tag. They tell Meta Platforms Ireland Limited and Google when a page was viewed, when a host account was created, and when a recharge was completed, so that we can measure our Facebook, Instagram and Google Search advertising and show our ads to clinics likely to find LiveQueue useful. Meta and Google receive technical information such as your IP address, browser type and the page address.</p>
+            <p><strong>The public queue display pages carry no advertising or analytics tracking of any kind.</strong> If you are a patient who scanned a QR code to follow a clinic&rsquo;s queue, nothing about your visit is sent to Meta, to Google or to any advertising network. We consider a waiting room to be the wrong place for marketing technology, and we have deliberately excluded those pages.</p>
+            <p>You can limit this through your browser&rsquo;s privacy settings, an ad or tracker blocker, or Meta&rsquo;s and Google&rsquo;s own ad preferences.</p>
 
             <h3 style={{ fontSize: 18, fontWeight: 700, color: color.ink, marginTop: 24, marginBottom: 8 }}>6. Your Choices</h3>
             <p>You may ask us to correct or delete the account information we hold about you at any time. Write to us from the Contact page and we will action the request, subject to any records we are required by law to retain.</p>

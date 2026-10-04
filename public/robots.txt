@@ -7,7 +7,8 @@
 User-agent: *
 Allow: /
 
-# Nothing to index on the sign-in screen.
+# Nothing to index on the sign-in screen, and the owner dashboard is private.
 Disallow: /login
+Disallow: /dev
 
 Sitemap: https://livequeue.co.in/sitemap.xml

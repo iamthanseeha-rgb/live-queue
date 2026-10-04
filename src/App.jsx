@@ -7,6 +7,7 @@ import { normalizeSlug, validateSlug, safeDecode } from './lib/slug';
 import { announceToken, primeSpeech, speechSupported, stopSpeaking } from './lib/speech';
 import { initPixel, trackViewContent, trackSignUp, trackPurchase } from './lib/pixel';
 import { initGoogleAds, trackAdsSignUp, trackAdsPurchase } from './lib/gtag';
+import DevDashboard from './DevDashboard';
 import {
   color, font, size, space, radius, shadow,
   panel, btnPrimary, btnSecondary, btnDark, input as inputStyle, label as labelStyle,
@@ -21,7 +22,10 @@ import { friendlyError } from './lib/errors';
 // The only pages the Meta Pixel is allowed to run on. Everything else — including
 // the queue search and every /<slug> display — is patient-facing and stays untracked.
 const PIXEL_PAGES = { welcome: 'landing', admin_login: 'sign_in', admin_dash: 'desk_dashboard' };
-const STATIC_PAGES = ['contact', 'privacy', 'terms', 'refunds', 'welcome', 'login'];
+// 'dev' is the owner-only dashboard. It is in this list so the route resolves,
+// but it is kept out of INDEXABLE, the sitemap and robots.txt — and the data
+// behind it is gated in SQL, not here.
+const STATIC_PAGES = ['contact', 'privacy', 'terms', 'refunds', 'welcome', 'login', 'dev'];
 const LOW_BALANCE = 50;          // show the "running low" banner at or below this many calls
 const TITLE_MAX = 60;
 const SUBTITLE_MAX = 80;
@@ -258,6 +262,7 @@ export default function App() {
       privacy: 'Privacy Policy – LiveQueue',
       terms: 'Terms of Service – LiveQueue',
       refunds: 'Refund Policy – LiveQueue',
+      dev: 'Owner dashboard – LiveQueue',
     };
     if (currentPage === 'status') {
       document.title = activeQueue
@@ -1627,6 +1632,15 @@ export default function App() {
   // ══════════════════════════════════════════════════════════
   // VIEW: CONTACT US (AIRBNB STYLE - CLEAN)
   // ══════════════════════════════════════════════════════════
+  // ── Owner dashboard (/dev) ───────────────────────────────
+  if (currentPage === 'dev') {
+    return (
+      <DevDashboard
+        onGoHome={() => { window.history.pushState({}, '', '/'); setCurrentPage('home'); }}
+      />
+    );
+  }
+
   if (currentPage === 'contact') {
     const whatsappUrl = "https://wa.me/918921677207?text=Hi%20LiveQueue%20Team%2C%20I%20have%20an%20issue%2Fsuggestion%3A";
 

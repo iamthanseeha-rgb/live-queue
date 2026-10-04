@@ -156,6 +156,66 @@ function ProductPreview() {
   );
 }
 
+// ── Demo video ───────────────────────────────────────────────────────────────
+// A click-to-play facade: until someone presses play we show only a still, so
+// the page carries no YouTube player, no cookies and no extra megabyte of
+// script. The iframe (privacy-enhanced youtube-nocookie domain) is created only
+// on the click that asks for it.
+const VIDEO_ID = 'CMdjlN0VIbs';
+
+function DemoVideo() {
+  const [playing, setPlaying] = React.useState(false);
+  return (
+    <div style={{
+      position: 'relative', width: '100%', aspectRatio: '16 / 9',
+      background: color.ink, borderRadius: radius.lg, overflow: 'hidden',
+      border: `1px solid ${color.line}`, boxShadow: shadow.lg,
+    }}>
+      {playing ? (
+        <iframe
+          src={`https://www.youtube-nocookie.com/embed/${VIDEO_ID}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
+          title="LiveQueue demo"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setPlaying(true)}
+          aria-label="Play the LiveQueue demo video"
+          style={{
+            position: 'absolute', inset: 0, width: '100%', height: '100%',
+            padding: 0, border: 0, cursor: 'pointer', display: 'block',
+            background: `#0E1320 url(https://i.ytimg.com/vi/${VIDEO_ID}/maxresdefault.jpg) center/cover no-repeat`,
+          }}
+        >
+          <span aria-hidden="true" style={{
+            position: 'absolute', inset: 0,
+            background: 'linear-gradient(180deg, rgba(14,19,32,0.10) 0%, rgba(14,19,32,0.55) 100%)',
+          }} />
+          <span aria-hidden="true" style={{
+            position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
+            width: 76, height: 76, borderRadius: '50%', background: color.brand,
+            boxShadow: '0 12px 34px rgba(224,11,65,0.45)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="#fff" aria-hidden="true">
+              <path d="M8 5.5v13l11-6.5z" />
+            </svg>
+          </span>
+          <span style={{
+            position: 'absolute', left: 0, right: 0, bottom: 0, padding: `${space[5]}px ${space[6]}px`,
+            color: '#fff', fontSize: size.sm, fontWeight: 650, textAlign: 'left',
+          }}>
+            Watch the demo &mdash; the whole thing, start to finish
+          </span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 function Logo({ onClick }) {
   return (
     <button
@@ -305,6 +365,20 @@ export default function LandingPage({ onGetStarted, onSignIn, onGoHome, onNaviga
             />
             <ProductPreview />
           </div>
+        </div>
+      </Section>
+
+      {/* ── Demo video ── */}
+      <Section tint={color.page} style={{ paddingTop: space[14], paddingBottom: space[14] }}>
+        <div style={{ maxWidth: 620, marginBottom: space[8] }}>
+          <div style={{ ...eyebrow, marginBottom: space[3] }}>See it working</div>
+          <h2 style={h2}>What it looks like in a real clinic.</h2>
+          <p style={{ ...lead, marginTop: space[3] }}>
+            The counter screen, the patient&rsquo;s phone and the QR poster &mdash; in one short video.
+          </p>
+        </div>
+        <div style={{ maxWidth: 820, margin: '0 auto' }}>
+          <DemoVideo />
         </div>
       </Section>
 

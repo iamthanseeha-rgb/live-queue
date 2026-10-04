@@ -368,8 +368,11 @@ export default function LandingPage({ onGetStarted, onSignIn, onGoHome, onNaviga
         </div>
       </Section>
 
-      {/* ── Demo video ── */}
-      <Section tint={color.page} style={{ paddingTop: space[14], paddingBottom: space[14] }}>
+      {/* ── Demo video ──
+           Untinted on purpose: a tint draws a hairline above and below the
+           section, and the tinted Features band sits right underneath, so two
+           tinted sections in a row left a stray double line across the page. */}
+      <Section style={{ paddingTop: 0, paddingBottom: space[16] }}>
         <div style={{ maxWidth: 620, marginBottom: space[8] }}>
           <div style={{ ...eyebrow, marginBottom: space[3] }}>See it working</div>
           <h2 style={h2}>What it looks like in a real clinic.</h2>

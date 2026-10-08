@@ -1,9 +1,17 @@
 // Shared slug rules: used when a host saves a slug AND when a patient searches,
 // so "Dr Adam", "dr-adam" and a pasted "livequeue.co.in/dr-adam" all resolve the same way.
 
+// Names the app itself answers on, so a clinic must never be able to take one:
+// the route would win and the clinic's waiting-room page would stop resolving.
+// Keep this list, STATIC_PAGES in App.jsx and the queue_details_slug_not_reserved
+// check in the database in step with each other.
 export const RESERVED_SLUGS = [
   'contact', 'privacy', 'terms', 'refunds', 'welcome', 'admin', 'login',
-  'home', 'status', 'assets', 'api', 'signup', 'dashboard',
+  'home', 'status', 'assets', 'api', 'signup', 'dashboard', 'dev',
+  // not routes yet, but likely to be — reserved now so no clinic has to be
+  // asked to change its printed QR poster later
+  'app', 'auth', 'about', 'help', 'support', 'pricing', 'blog', 'docs',
+  'sitemap', 'robots', 'static', 'account', 'settings',
 ];
 
 export const SLUG_MAX = 40;

@@ -22,9 +22,11 @@ import { friendlyError } from './lib/errors';
 // The only pages the Meta Pixel is allowed to run on. Everything else — including
 // the queue search and every /<slug> display — is patient-facing and stays untracked.
 const PIXEL_PAGES = { welcome: 'landing', admin_login: 'sign_in', admin_dash: 'desk_dashboard' };
-// 'dev' is the owner-only dashboard. It is in this list so the route resolves,
-// but it is kept out of INDEXABLE, the sitemap and robots.txt — and the data
-// behind it is gated in SQL, not here.
+// 'dev' is the owner-only dashboard. Every name in this list shadows a
+// clinic's public page, so each one must also be in RESERVED_SLUGS (lib/slug.js)
+// and in the database's slug check — otherwise a clinic could claim the name and
+// its waiting-room page would silently stop resolving. It is kept out of
+// INDEXABLE, the sitemap and robots.txt, and its data is gated in SQL, not here.
 const STATIC_PAGES = ['contact', 'privacy', 'terms', 'refunds', 'welcome', 'login', 'dev'];
 const LOW_BALANCE = 50;          // show the "running low" banner at or below this many calls
 const TITLE_MAX = 60;

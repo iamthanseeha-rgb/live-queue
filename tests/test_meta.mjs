@@ -231,6 +231,56 @@ for (const page of INDEXABLE) {
 }
 ok(!locs.some((l) => /\/(login|dev)$/.test(l)), 'sitemap does not list a private route');
 
+console.log('\nThe comparison page is wired up everywhere it has to be');
+const comparePath = 'token-display-price';
+const compareSrc = readFileSync(join(root, 'src/ComparePage.jsx'), 'utf8');
+try {
+  esbuild.transformSync(compareSrc, { loader: 'jsx' });
+  ok(true, 'src/ComparePage.jsx parses as JSX');
+} catch (err) {
+  ok(false, `src/ComparePage.jsx parses as JSX — ${err.message}`);
+}
+ok(INDEXABLE.includes(comparePath), 'the comparison page is indexable');
+ok(
+  new RegExp(`if \\(currentPage === '${comparePath}'\\)`).test(appSrc),
+  'App.jsx has a render branch for it, so the route is not a blank page',
+);
+// A route name shadows every clinic slug, so all three guards must list it or a
+// clinic could claim the name and lose its waiting-room page.
+const staticPagesLiteral = sliceBalanced(appSrc, 'const STATIC_PAGES = ', '[', ']');
+ok(
+  new Function(`return ${staticPagesLiteral};`)().includes(comparePath),
+  'STATIC_PAGES lists it, so /token-display-price resolves as a route',
+);
+const slugSrc = readFileSync(join(root, 'src/lib/slug.js'), 'utf8');
+ok(slugSrc.includes(`'${comparePath}'`), 'RESERVED_SLUGS lists it');
+const migrations = readFileSync(
+  join(root, 'supabase/migrations/20261012_reserve_compare_slug.sql'),
+  'utf8',
+);
+ok(migrations.includes(`'${comparePath}'`), 'the database check constraint lists it');
+// Every name the app reserves in JS must also be in the SQL constraint,
+// otherwise the database would let a clinic take a route name.
+const reservedInJs = new Function(
+  `return ${sliceBalanced(slugSrc, 'export const RESERVED_SLUGS = ', '[', ']')};`,
+)();
+const missingInSql = reservedInJs.filter((n) => !migrations.includes(`'${n}'`));
+ok(missingInSql.length === 0, `every reserved slug is in the SQL constraint (missing: ${missingInSql.join(', ') || 'none'})`);
+
+const landing = readFileSync(join(root, 'src/LandingPage.jsx'), 'utf8');
+ok(
+  landing.includes(comparePath),
+  'the landing page links to it, so Google has an internal link to follow',
+);
+
+console.log('\nIts prices are attributed, not invented');
+ok(/IndiaMART/.test(compareSrc), 'the hardware prices name their source');
+ok(/PRICES_CHECKED/.test(compareSrc), 'the page prints when the prices were checked');
+ok(
+  /When you should buy the board instead/.test(compareSrc),
+  'the page says when a competitor is the better buy',
+);
+
 console.log('\nindex.html stays a fallback, not a second source of truth');
 ok(!/<link[^>]+rel="canonical"/.test(htmlSrc), 'index.html still has no canonical tag');
 ok((htmlSrc.match(/<meta name="description"/g) || []).length === 1, 'index.html has one description tag');

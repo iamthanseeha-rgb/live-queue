@@ -609,6 +609,7 @@ export default function LandingPage({ onGetStarted, onSignIn, onGoHome, onNaviga
             <div>
               <div style={{ ...eyebrow, fontSize: 11, marginBottom: space[3] }}>Legal</div>
               <div style={{ display: 'grid', gap: space[2] }}>
+                <button onClick={() => onNavigate('token-display-price')} style={footerLink}>What it costs vs a token machine</button>
                 <button onClick={() => onNavigate('contact')} style={footerLink}>Contact Us</button>
                 <button onClick={() => onNavigate('privacy')} style={footerLink}>Privacy Policy</button>
                 <button onClick={() => onNavigate('terms')} style={footerLink}>Terms of Service</button>

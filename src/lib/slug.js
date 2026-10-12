@@ -12,6 +12,7 @@ export const RESERVED_SLUGS = [
   // asked to change its printed QR poster later
   'app', 'auth', 'about', 'help', 'support', 'pricing', 'blog', 'docs',
   'sitemap', 'robots', 'static', 'account', 'settings',
+  'token-display-price',
 ];
 
 export const SLUG_MAX = 40;

@@ -8,6 +8,7 @@ import { announceToken, primeSpeech, speechSupported, stopSpeaking } from './lib
 import { initPixel, trackViewContent, trackSignUp, trackPurchase } from './lib/pixel';
 import { initGoogleAds, trackAdsSignUp, trackAdsPurchase } from './lib/gtag';
 import DevDashboard from './DevDashboard';
+import ComparePage from './ComparePage';
 import {
   color, font, size, space, radius, shadow,
   panel, btnPrimary, btnSecondary, btnDark, input as inputStyle, label as labelStyle,
@@ -27,7 +28,7 @@ const PIXEL_PAGES = { welcome: 'landing', admin_login: 'sign_in', admin_dash: 'd
 // and in the database's slug check — otherwise a clinic could claim the name and
 // its waiting-room page would silently stop resolving. It is kept out of
 // INDEXABLE, the sitemap and robots.txt, and its data is gated in SQL, not here.
-const STATIC_PAGES = ['contact', 'privacy', 'terms', 'refunds', 'welcome', 'login', 'dev'];
+const STATIC_PAGES = ['contact', 'privacy', 'terms', 'refunds', 'welcome', 'login', 'dev', 'token-display-price'];
 
 // Per-route <title> and <meta name="description">. Every route is served the
 // same index.html, so the static title and description in that file are only a
@@ -44,6 +45,11 @@ const PAGE_META = {
     title: 'Check your clinic token number live – LiveQueue',
     description:
       "See the token number your clinic is serving right now. Scan the QR code on their poster or type their LiveQueue link, and watch your turn from anywhere.",
+  },
+  'token-display-price': {
+    title: 'Token display system price in India – LiveQueue',
+    description:
+      'What a clinic token display actually costs: published board prices from \u20b92,500, what subscription software charges, and how using the TV you own compares.',
   },
   welcome: {
     title: 'Token display system for clinics – LiveQueue',
@@ -88,7 +94,7 @@ const PAGE_META = {
 // live patient flow to be searchable by anyone. If per-clinic pages are ever
 // wanted in Google, the thing to index is a real clinic profile — name,
 // address, hours, a link through to the live queue — not the display itself.
-const INDEXABLE = ['home', 'welcome', 'contact', 'privacy', 'terms', 'refunds'];
+const INDEXABLE = ['home', 'welcome', 'contact', 'privacy', 'terms', 'refunds', 'token-display-price'];
 
 // The description and Open Graph text index.html ships with, read once before
 // anything overwrites them. A route with no description of its own is restored
@@ -1154,6 +1160,31 @@ export default function App() {
   const isLowBalance = remainingTokens !== null && remainingTokens > 0 && remainingTokens <= LOW_BALANCE;
   const currentPublicLink = queue?.slug ? `${window.location.origin}/${queue.slug}` : '';
 
+
+  // ══════════════════════════════════════════════════════════
+  // VIEW: PRICE COMPARISON (/token-display-price)
+  //
+  // Written for the search that happens BEFORE someone wants LiveQueue —
+  // "what does a token display system cost" — where the reader is usually
+  // about to buy a board off IndiaMART. /welcome sells; this one informs,
+  // and sends the reader to /welcome once they are convinced.
+  // ══════════════════════════════════════════════════════════
+  if (currentPage === 'token-display-price') {
+    return (
+      <ComparePage
+        onGetStarted={() => goToLogin('signup')}
+        onSignIn={() => goToLogin('login')}
+        onGoHome={() => {
+          window.history.pushState({}, '', '/');
+          setCurrentPage('home');
+        }}
+        onNavigate={(page) => {
+          window.history.pushState({}, '', `/${page}`);
+          setCurrentPage(page);
+        }}
+      />
+    );
+  }
 
   // ══════════════════════════════════════════════════════════
   // VIEW: DEDICATED LANDING PAGE (/welcome) FOR META ADS

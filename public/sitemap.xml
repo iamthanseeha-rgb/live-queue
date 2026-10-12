@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The six public pages of livequeue.co.in.
+  The seven public pages of livequeue.co.in.
 
   Individual clinic queue pages (/dr-adam and the like) are deliberately left
   out: they are live displays for a clinic's own patients, they change every
@@ -18,6 +18,12 @@
     <lastmod>2026-09-20</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://livequeue.co.in/token-display-price</loc>
+    <lastmod>2026-10-12</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
   </url>
   <url>
     <loc>https://livequeue.co.in/contact</loc>

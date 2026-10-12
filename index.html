@@ -12,6 +12,13 @@
     />
     <meta name="color-scheme" content="light only">
     <meta name="theme-color" content="#E00B41" />
+    <!-- These are a FALLBACK, not the real tags. The app serves this same file
+         for every route, so App.jsx rewrites the title, the description and the
+         og: pair per route from PAGE_META — the home page targets patients
+         checking a token, /welcome targets clinics buying a display. What is
+         left here is what a crawler or link preview that does not run
+         JavaScript sees, so it stays clinic-facing: /welcome is the link that
+         actually gets shared. -->
     <title>LiveQueue – Live token display for clinics</title>
     <meta name="description" content="Show your clinic's live token number on any TV or phone. Patients scan a QR code and track their turn from anywhere. 1,500 free calls to start." />
     <meta property="og:type" content="website" />

@@ -28,6 +28,67 @@ const PIXEL_PAGES = { welcome: 'landing', admin_login: 'sign_in', admin_dash: 'd
 // its waiting-room page would silently stop resolving. It is kept out of
 // INDEXABLE, the sitemap and robots.txt, and its data is gated in SQL, not here.
 const STATIC_PAGES = ['contact', 'privacy', 'terms', 'refunds', 'welcome', 'login', 'dev'];
+
+// Per-route <title> and <meta name="description">. Every route is served the
+// same index.html, so the static title and description in that file are only a
+// fallback for a crawler's first, non-rendering pass; these are the real ones.
+//
+// The home page and /welcome must never share either value. They answer two
+// different searches — a patient checking a token number, a clinic shopping for
+// a display system — and when two pages on one site compete for the same phrase
+// Google picks one of them and may pick the wrong one. Keep home patient-facing
+// and /welcome clinic-facing. Google counts roughly 155 characters of a
+// description, so each one says the useful part first.
+const PAGE_META = {
+  home: {
+    title: 'Check your clinic token number live – LiveQueue',
+    description:
+      "See the token number your clinic is serving right now. Scan the QR code on their poster or type their LiveQueue link, and watch your turn from anywhere.",
+  },
+  welcome: {
+    title: 'Token display system for clinics – LiveQueue',
+    description:
+      "Show your clinic's live token number on any TV and on every patient's phone. No token machine to buy. 1,500 calls free, then ₹99 for 500. No subscription.",
+  },
+  contact: {
+    title: 'Contact – LiveQueue',
+    description:
+      'Questions about setting up a token display for your clinic? Send us a message and we reply the same day.',
+  },
+  privacy: {
+    title: 'Privacy Policy – LiveQueue',
+    description:
+      'What LiveQueue stores, what it does not, and why no patient is ever asked for a name, a phone number or a login.',
+  },
+  terms: {
+    title: 'Terms of Service – LiveQueue',
+    description:
+      'The terms for using LiveQueue as a clinic: your account, your call credits, uptime, and how either side can stop.',
+  },
+  refunds: {
+    title: 'Refund Policy – LiveQueue',
+    description:
+      'When a LiveQueue call-credit top-up can be refunded, how long it takes, and how to ask for one.',
+  },
+  admin_login: { title: 'Sign in – LiveQueue' },
+  admin_dash: { title: 'Desk Manager – LiveQueue' },
+  reset_password: { title: 'Set new password – LiveQueue' },
+  dev: { title: 'Owner dashboard – LiveQueue' },
+};
+
+// The description and Open Graph text index.html ships with, read once before
+// anything overwrites them. A route with no description of its own is restored
+// to these rather than left showing the last route's wording.
+const readMeta = (selector) => {
+  if (typeof document === 'undefined') return '';
+  return document.querySelector(selector)?.getAttribute('content') || '';
+};
+const STATIC_META = {
+  description: readMeta('meta[name="description"]'),
+  ogTitle: readMeta('meta[property="og:title"]'),
+  ogDescription: readMeta('meta[property="og:description"]'),
+};
+
 const LOW_BALANCE = 50;          // show the "running low" banner at or below this many calls
 const TITLE_MAX = 60;
 const SUBTITLE_MAX = 80;
@@ -252,27 +313,39 @@ export default function App() {
     return () => window.removeEventListener('popstate', handleLocationChange);
   }, [session]);
 
-  // Browser tab titles (also what WhatsApp / bookmarks show)
+  // Browser tab title (also what a bookmark shows) and the meta description
+  // Google reads. Both come from PAGE_META so the two can't drift apart. A
+  // clinic's live display gets a title built from its own numbers and no
+  // description at all — it is noindex by way of being absent from INDEXABLE,
+  // the sitemap and robots.txt, so a description would only be noise.
   useEffect(() => {
-    const titles = {
-      home: 'LiveQueue – Live token display for clinics',
-      welcome: 'LiveQueue – Live token display for clinics',
-      admin_login: 'Sign in – LiveQueue',
-      admin_dash: 'Desk Manager – LiveQueue',
-      reset_password: 'Set new password – LiveQueue',
-      contact: 'Contact – LiveQueue',
-      privacy: 'Privacy Policy – LiveQueue',
-      terms: 'Terms of Service – LiveQueue',
-      refunds: 'Refund Policy – LiveQueue',
-      dev: 'Owner dashboard – LiveQueue',
-    };
+    const meta = PAGE_META[currentPage];
+
     if (currentPage === 'status') {
       document.title = activeQueue
         ? `${activeQueue.queue_position ? `Now serving ${activeQueue.queue_position}` : 'Not started'} · ${activeQueue.queue_title} – LiveQueue`
         : 'Live queue – LiveQueue';
     } else {
-      document.title = titles[currentPage] || 'LiveQueue';
+      document.title = meta?.title || 'LiveQueue';
     }
+
+    // Written into the tag index.html already ships, so the page never ends up
+    // with two description tags. A route with no description of its own falls
+    // back to the static one instead of going blank — an empty description lets
+    // Google write its own from whatever text it finds, which is worse than a
+    // generic line.
+    const set = (selector, value) => {
+      const el = document.querySelector(selector);
+      if (el) el.setAttribute('content', value);
+    };
+    set('meta[name="description"]', meta?.description || STATIC_META.description);
+
+    // Mirror the pair into the Open Graph tags so a WhatsApp or Facebook
+    // preview of /welcome does not carry the home page's wording. This only
+    // reaches crawlers that run JavaScript; the static tags in index.html are
+    // what the rest see.
+    set('meta[property="og:title"]', (currentPage !== 'status' && meta?.title) || STATIC_META.ogTitle);
+    set('meta[property="og:description"]', meta?.description || STATIC_META.ogDescription);
   }, [currentPage, activeQueue?.queue_position, activeQueue?.queue_title]);
 
   // Canonical URL, set per route rather than in index.html. Vite serves the

@@ -64,11 +64,26 @@ const effectEnd = appSrc.indexOf(
 if (effectEnd === -1) throw new Error('could not find the end of the title/description effect');
 const effectBody = appSrc.slice(effectStart, effectEnd);
 
-// ── Run the real effect body against the real index.html ────────────────────
+// The canonical + robots effect, lifted the same way.
+const robotsStart = appSrc.indexOf('const indexable = INDEXABLE.includes(currentPage);');
+if (robotsStart === -1) throw new Error('could not find the canonical/robots effect');
+const robotsEnd = appSrc.indexOf('}, [currentPage]);', robotsStart);
+if (robotsEnd === -1) throw new Error('could not find the end of the canonical/robots effect');
+const robotsBody = appSrc.slice(robotsStart, robotsEnd);
 
-function headFor(currentPage, activeQueue = null) {
-  const dom = new JSDOM(htmlSrc, { runScripts: 'outside-only' });
-  const { document } = dom.window;
+// The routes that are allowed in the index. Mirrors INDEXABLE in App.jsx; the
+// test reads that list back so the two cannot drift.
+const indexableLiteral = sliceBalanced(appSrc, 'const INDEXABLE = ', '[', ']');
+const INDEXABLE = new Function(`return ${indexableLiteral};`)();
+
+// ── Run the real effect bodies against the real index.html ──────────────────
+
+function headFor(currentPage, activeQueue = null, pathname = '/') {
+  const dom = new JSDOM(htmlSrc, {
+    runScripts: 'outside-only',
+    url: `https://livequeue.co.in${pathname}`,
+  });
+  const { document, window } = dom.window;
 
   const STATIC_META = {
     description: document.querySelector('meta[name="description"]')?.getAttribute('content') || '',
@@ -76,8 +91,12 @@ function headFor(currentPage, activeQueue = null) {
     ogDescription: document.querySelector('meta[property="og:description"]')?.getAttribute('content') || '',
   };
 
-  const run = new Function('document', 'PAGE_META', 'STATIC_META', 'currentPage', 'activeQueue', effectBody);
-  run(document, PAGE_META, STATIC_META, currentPage, activeQueue);
+  new Function('document', 'PAGE_META', 'STATIC_META', 'currentPage', 'activeQueue', effectBody)(
+    document, PAGE_META, STATIC_META, currentPage, activeQueue,
+  );
+  new Function('document', 'window', 'INDEXABLE', 'currentPage', robotsBody)(
+    document, window, INDEXABLE, currentPage,
+  );
 
   return {
     title: document.title,
@@ -85,14 +104,11 @@ function headFor(currentPage, activeQueue = null) {
     ogTitle: document.querySelector('meta[property="og:title"]')?.getAttribute('content') || '',
     ogDescription: document.querySelector('meta[property="og:description"]')?.getAttribute('content') || '',
     descriptionTags: document.querySelectorAll('meta[name="description"]').length,
+    canonical: document.querySelector('link[rel="canonical"]')?.getAttribute('href') || null,
+    robots: document.querySelector('meta[name="robots"]')?.getAttribute('content') || null,
     static: STATIC_META,
   };
 }
-
-// The routes that are allowed in the index. Mirrors INDEXABLE in App.jsx; the
-// test reads that list back so the two cannot drift.
-const indexableLiteral = sliceBalanced(appSrc, 'const INDEXABLE = ', '[', ']');
-const INDEXABLE = new Function(`return ${indexableLiteral};`)();
 
 console.log('App.jsx compiles');
 try {
@@ -164,6 +180,56 @@ ok(
   status.ogTitle === status.static.ogTitle,
   "a clinic's display does not overwrite og:title with a patient's token number",
 );
+
+console.log('\nOnly the six public pages are offered to Google');
+for (const page of INDEXABLE) {
+  const head = headFor(page, null, page === 'home' ? '/' : `/${page}`);
+  ok(head.robots === null, `${page}: carries no noindex tag`);
+  ok(
+    head.canonical === `https://livequeue.co.in/${page === 'home' ? '' : page}`,
+    `${page}: canonical points at its own URL (got ${head.canonical})`,
+  );
+}
+
+console.log('\nEverything else is explicitly kept out');
+for (const page of ['status', 'admin_login', 'admin_dash', 'reset_password', 'dev']) {
+  const head = headFor(page, page === 'status' ? { queue_position: 7, queue_title: 'City Clinic' } : null, '/dr-adam');
+  ok(head.robots === 'noindex, follow', `${page}: carries noindex, follow (got ${head.robots})`);
+  ok(head.canonical === null, `${page}: has no canonical tag`);
+}
+
+console.log("\nA clinic's page must stay crawlable so Google can read the noindex");
+const robotsTxt = readFileSync(join(root, 'public/robots.txt'), 'utf8');
+const disallows = [...robotsTxt.matchAll(/^Disallow:\s*(\S+)/gm)].map((m) => m[1]);
+ok(disallows.length > 0, `robots.txt still blocks the private routes (${disallows.join(', ')})`);
+ok(
+  !disallows.includes('/'),
+  'robots.txt does not block the whole site',
+);
+for (const d of disallows) {
+  const slug = d.replace(/^\//, '');
+  ok(
+    !INDEXABLE.includes(slug),
+    `${d} is blocked in robots.txt and is not one of the pages meant to be indexed`,
+  );
+}
+// The trap this guards: blocking a path in robots.txt stops Googlebot fetching
+// it, so it never reads the noindex and can still list a bare URL. Only /login
+// and /dev may be blocked, and both are also noindex-ed in the app.
+ok(
+  disallows.every((d) => ['/login', '/dev'].includes(d)),
+  `only /login and /dev are blocked in robots.txt (found ${disallows.join(', ')})`,
+);
+
+console.log('\nThe sitemap offers exactly the indexable pages');
+const sitemap = readFileSync(join(root, 'public/sitemap.xml'), 'utf8');
+const locs = [...sitemap.matchAll(/<loc>(.*?)<\/loc>/g)].map((m) => m[1]);
+ok(locs.length === INDEXABLE.length, `sitemap lists ${locs.length} URLs for ${INDEXABLE.length} indexable routes`);
+for (const page of INDEXABLE) {
+  const want = `https://livequeue.co.in/${page === 'home' ? '' : page}`;
+  ok(locs.includes(want), `sitemap lists ${want}`);
+}
+ok(!locs.some((l) => /\/(login|dev)$/.test(l)), 'sitemap does not list a private route');
 
 console.log('\nindex.html stays a fallback, not a second source of truth');
 ok(!/<link[^>]+rel="canonical"/.test(htmlSrc), 'index.html still has no canonical tag');

@@ -76,6 +76,20 @@ const PAGE_META = {
   dev: { title: 'Owner dashboard – LiveQueue' },
 };
 
+// The only routes allowed in Google. Everything else — a clinic's live display
+// above all — gets a noindex tag (see the robots effect below).
+//
+// Clinic /slug pages stay out on purpose, and this is a product decision, not
+// just an SEO one. A display page is a number that changes every few minutes,
+// so there is nothing on it to rank. At three desks that is merely pointless;
+// at three hundred it is three hundred near-identical pages, which is exactly
+// the thin-content pattern that drags down the pages that do matter. And a
+// clinic signed up for a screen in its waiting room, not for its name and its
+// live patient flow to be searchable by anyone. If per-clinic pages are ever
+// wanted in Google, the thing to index is a real clinic profile — name,
+// address, hours, a link through to the live queue — not the display itself.
+const INDEXABLE = ['home', 'welcome', 'contact', 'privacy', 'terms', 'refunds'];
+
 // The description and Open Graph text index.html ships with, read once before
 // anything overwrites them. A route with no description of its own is restored
 // to these rather than left showing the last route's wording.
@@ -348,26 +362,55 @@ export default function App() {
     set('meta[property="og:description"]', meta?.description || STATIC_META.ogDescription);
   }, [currentPage, activeQueue?.queue_position, activeQueue?.queue_title]);
 
-  // Canonical URL, set per route rather than in index.html. Vite serves the
-  // same index.html for every path, so a static canonical there would point
-  // every page at the home page and Google would drop the rest as duplicates.
-  // Only the pages in the sitemap get one; the dashboard, the sign-in screen
-  // and a clinic's live queue are not pages we want indexed at all.
+  // Canonical URL and the robots tag, both set per route rather than in
+  // index.html. Vite serves the same index.html for every path, so a static
+  // canonical there would point every page at the home page and Google would
+  // drop the rest as duplicates.
+  //
+  // Everything not in INDEXABLE gets an explicit noindex. Leaving a page out of
+  // the sitemap is not a refusal — it only means Google was not told about the
+  // page, and Google indexes plenty of pages it was never told about. A clinic
+  // that links its queue page from a Facebook post or a Google Business profile
+  // hands Googlebot the URL directly, and without this tag it would be indexed.
+  //
+  // Note the deliberate asymmetry with robots.txt: /login and /dev are blocked
+  // there, but a clinic's /slug page must NOT be. A Disallow stops Googlebot
+  // fetching the page at all, which means it never sees the noindex below and
+  // can still list a bare URL it found elsewhere. To keep a page OUT of the
+  // index, Google has to be allowed in to read the tag that says so.
   useEffect(() => {
-    const INDEXABLE = ['home', 'welcome', 'contact', 'privacy', 'terms', 'refunds'];
-    let tag = document.querySelector('link[rel="canonical"]');
-    if (!INDEXABLE.includes(currentPage)) {
-      if (tag) tag.remove();
-      return;
+    const indexable = INDEXABLE.includes(currentPage);
+
+    let canonical = document.querySelector('link[rel="canonical"]');
+    if (indexable) {
+      if (!canonical) {
+        canonical = document.createElement('link');
+        canonical.rel = 'canonical';
+        document.head.appendChild(canonical);
+      }
+      // pathname only, so the UTM parameters on ad traffic don't fragment
+      // /welcome into a dozen separate URLs in the index.
+      canonical.href = 'https://livequeue.co.in' + window.location.pathname;
+    } else if (canonical) {
+      canonical.remove();
     }
-    if (!tag) {
-      tag = document.createElement('link');
-      tag.rel = 'canonical';
-      document.head.appendChild(tag);
+
+    let robots = document.querySelector('meta[name="robots"]');
+    if (indexable) {
+      // Removed rather than set to "index", because a slug page that resolves
+      // into the search view and back must not leave a stale noindex behind on
+      // a page we do want indexed.
+      if (robots) robots.remove();
+    } else {
+      if (!robots) {
+        robots = document.createElement('meta');
+        robots.name = 'robots';
+        document.head.appendChild(robots);
+      }
+      // noindex keeps the page out of search results; follow still lets Google
+      // walk the links on it back to the pages we do want indexed.
+      robots.setAttribute('content', 'noindex, follow');
     }
-    // pathname only, so the UTM parameters on ad traffic don't fragment
-    // /welcome into a dozen separate URLs in the index.
-    tag.href = 'https://livequeue.co.in' + window.location.pathname;
   }, [currentPage]);
 
   // Meta Pixel – an ALLOWLIST, not a denylist. It starts only on the three pages
